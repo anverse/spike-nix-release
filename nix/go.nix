@@ -7,8 +7,8 @@
 let
   inherit (pkgs) lib;
 
-  # Module directory -> hash of its downloaded dependencies (local modules
-  # included), or null for a module that requires no other module. `nix run .#update -- go` updates
+  # Module directory -> hash of its downloaded external dependencies, or
+  # null for a module that requires no other module. `nix run .#update -- go` updates
   # the modules and these hashes.
   dependencyHashes = lib.importJSON ./go-modules.json;
 
@@ -45,6 +45,10 @@ let
       src = sourceOf module;
       modRoot = module;
       vendorHash = dependencyHashes.${module};
+      # Download the module cache rather than a vendor directory: local
+      # modules (api, through replace directives) then stay out of the
+      # download, so a change to api does not change its hash.
+      proxyVendor = true;
       doCheck = false;
       # The Go linker already strips (-s -w) and signs macOS binaries. Nix's
       # fixup (strip, re-signing) differs between Linux and macOS hosts and

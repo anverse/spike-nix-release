@@ -1,8 +1,8 @@
 {
-  "adapters/echo": "sha256-BrV/Ja5d5dp2ulajWUYKupGk3G40AYC+b7NH83zMUHg=",
+  "adapters/echo": "sha256-SuU3c1yjGaE9bhQm0Tr6F16h2l2f35a6dpSC7vGaZ5o=",
   "api": null,
-  "spikectl": "sha256-j9mQeUe1+lgmbTGA1s+OKiLbY21qRSfhWTtosc3JVyQ=",
-  "spiked": "sha256-/U9SJbgkbsaQd/04euMRgwxiDIEkibXNDnEjWArUHwA=",
-  "test/e2e": "sha256-TTa1pfB2Ucq9mzFBGeYk65Kf623Ukljok0pIWNG3UJc=",
-  "tools": "sha256-9jK3jKbFp+5WSQfMbNzwIB55bC5KScZOaFHItffTF00="
+  "spikectl": "sha256-Gf+KbTTJVdeH9PGYtvg0hguLsdU9Uqwz2shqLgHsbJo=",
+  "spiked": null,
+  "test/e2e": null,
+  "tools": "sha256-Qq31w1MyEsiTzj/2lUYCekTFqQDXtyiTttV8rvtpLGY="
 }

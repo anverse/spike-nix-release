@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -60,12 +61,12 @@ func updateDependencies(module string) error {
 	return inModule.Run("go", "mod", "tidy")
 }
 
-// dependencyHash is the hash of a module's downloaded dependencies, local
-// modules included. Nix reports it when it builds them with an empty hash.
+// dependencyHash is the hash of a module's downloaded external
+// dependencies. Nix reports it when it builds them with an empty hash.
+// A module without external dependencies has none.
 func dependencyHash(module string, hashes repo.GoModules) (*string, error) {
-	requires, err := hasRequirements(module)
-	if err != nil || !requires {
-		return nil, err
+	if !hasExternalDependencies(module) {
+		return nil, nil
 	}
 	empty := ""
 	hashes[module] = &empty
@@ -79,16 +80,9 @@ func dependencyHash(module string, hashes repo.GoModules) (*string, error) {
 	return &hash, nil
 }
 
-// hasRequirements is true if the module's go.mod requires any module, local
-// ones (through replace directives) included.
-func hasRequirements(module string) (bool, error) {
-	out, err := sh.Cmd{Dir: module, Env: []string{"GOWORK=off"}}.Output("go", "mod", "edit", "-json")
-	if err != nil {
-		return false, err
-	}
-	var goMod struct{ Require []struct{ Path string } }
-	if err := json.Unmarshal([]byte(out), &goMod); err != nil {
-		return false, err
-	}
-	return len(goMod.Require) > 0, nil
+// hasExternalDependencies is true if go.sum lists anything. Local modules,
+// used through replace directives, do not appear there.
+func hasExternalDependencies(module string) bool {
+	sum, err := os.ReadFile(filepath.Join(module, "go.sum"))
+	return err == nil && len(strings.TrimSpace(string(sum))) > 0
 }
