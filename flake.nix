@@ -96,7 +96,7 @@
 
           apps = with pkgs; {
             release = app "release" "Cut, dry-run and publish component releases"
-              [ git gh regclient kubernetes-helm coreutils ];
+              [ go git gh regclient kubernetes-helm coreutils ];
             dev = app "dev" "Development cluster with gVisor, and the e2e tests"
               [ k3d kubectl helmfile-wrapped kubernetes-helm regclient coreutils ];
             update = app "update" "Move pinned dependencies to their newest versions"
