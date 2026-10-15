@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  {{- with .Values.runtimeClassName }}
+  runtimeClassName: {{ . }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+  containers:
+    - name: e2e
+      image: "{{ required "image.repository" .Values.image.repository }}:{{ required "image.tag" .Values.image.tag }}"
+      env:
+        - { name: SPIKED_URL, value: {{ required "url" .Values.url | quote }} }
+        - { name: SPIKED_VERSION, value: {{ .Values.version | quote }} }
+        - { name: EXPECT_GVISOR, value: {{ .Values.expectGvisor | quote }} }

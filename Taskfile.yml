@@ -1,0 +1,45 @@
+version: "3"
+
+# The only entry point, locally and in CI. Run inside `nix develop`.
+# Nix builds; tasks check, orchestrate and publish.
+#
+#   task lint test check          verify (what CI runs on every change)
+#   task release ...              cut and publish releases (taskfiles/release.yml)
+#   task dev:up, task e2e         development cluster and e2e (taskfiles/dev.yml)
+#   task update                   move pinned dependencies to their latest versions (taskfiles/update.yml)
+
+includes:
+  release: ./taskfiles/release.yml
+  dev: ./taskfiles/dev.yml
+  update: ./taskfiles/update.yml
+  spike: ./taskfiles/spike.yml
+
+tasks:
+  lint:
+    desc: go vet, gofmt, chart lint
+    env: { CGO_ENABLED: "0" }
+    cmds:
+      - go vet ./...
+      - test -z "$(gofmt -l cmd internal test)" || (gofmt -l cmd internal test && exit 1)
+      - helm lint charts/*
+
+  test:
+    desc: Unit tests (the e2e suite skips itself outside the cluster)
+    env: { CGO_ENABLED: "0" }
+    cmds:
+      - go test ./...
+
+  check:
+    desc: Build every artifact of every component (nix flake check)
+    cmds:
+      - nix flake check --print-build-logs
+
+  vendor-hash:
+    desc: Update the Go dependency hash after go.mod changes
+    cmds:
+      - nix-update --flake --version=skip spikectl
+
+  e2e:
+    desc: Development cluster, deploy, Helm tests (ENV=local or ci)
+    cmds:
+      - task: dev:e2e

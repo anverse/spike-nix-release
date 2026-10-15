@@ -1,0 +1,79 @@
+name: release
+
+on:
+  push:
+    tags: ["*/v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    outputs:
+      component: ${{ steps.tag.outputs.component }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: tag
+        run: |
+          echo "component=${GITHUB_REF_NAME%%/*}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME##*/v}" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/nix
+      # Short-lived tokens for the tap and the bucket from the organization's
+      # release bot apps; the workflow's own token cannot push to other
+      # repositories.
+      - uses: actions/create-github-app-token@v2
+        id: tap
+        with:
+          app-id: ${{ secrets.HOMEBREW_BOT_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-tap
+      - uses: actions/create-github-app-token@v2
+        id: bucket
+        with:
+          app-id: ${{ secrets.SCOOP_BOT_APP_ID }}
+          private-key: ${{ secrets.SCOOP_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: scoop-bucket
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          echo "$TOKEN" | nix develop --command regctl registry login ghcr.io -u "${{ github.actor }}" --pass-stdin
+          echo "$TOKEN" | nix develop --command helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_TOKEN: ${{ steps.tap.outputs.token }}
+          BUCKET_TOKEN: ${{ steps.bucket.outputs.token }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: nix develop --command task release:publish TAG="$GITHUB_REF_NAME"
+
+  install-cli:
+    needs: release
+    if: needs.release.outputs.component == 'spikectl'
+    uses: ./.github/workflows/install.yml
+    with:
+      version: ${{ needs.release.outputs.version }}
+
+  pull-service:
+    needs: release
+    if: needs.release.outputs.component == 'spiked'
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Run the published image
+        run: |
+          docker run -d --name spiked -p 8080:8080 ghcr.io/${{ github.repository }}/spiked:${{ needs.release.outputs.version }}
+          sleep 2
+          curl -fsS localhost:8080/version
+      - name: Render the published chart
+        run: helm template t oci://ghcr.io/${{ github.repository }}/charts/spiked --version ${{ needs.release.outputs.version }}

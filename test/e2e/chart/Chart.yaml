@@ -1,0 +1,4 @@
+apiVersion: v2
+name: e2e
+description: The end-to-end suite as a Helm test, for the development cluster only
+version: 0.1.0

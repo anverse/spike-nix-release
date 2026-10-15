@@ -1,0 +1,8 @@
+image:
+  repository: ""
+  tag: ""
+# Service under test and the version it must report.
+url: ""
+version: ""
+runtimeClassName: ""
+expectGvisor: false

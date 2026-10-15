@@ -1,0 +1,169 @@
+version: "3"
+
+# Releases, one component at a time (ADR-0024).
+#
+#   task release COMPONENT=spikectl VERSION=0.1.0 MESSAGE="…"   cut: bump, commit, tag, push
+#   task release:dry-run COMPONENT=spiked                       build and write notes into dist/
+#   task release:publish TAG=spiked/v0.1.0                      publish a pushed tag (CI)
+
+tasks:
+  default:
+    desc: 'Cut a release: COMPONENT=spikectl VERSION=0.1.0 MESSAGE="summary" [PUSH=false]'
+    requires: { vars: [COMPONENT, VERSION, MESSAGE] }
+    vars:
+      TAG: "{{.COMPONENT}}/v{{.VERSION}}"
+      PUSH: '{{.PUSH | default "true"}}'
+    preconditions:
+      - sh: echo "{{.VERSION}}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+        msg: VERSION must be X.Y.Z
+      - sh: jq -e --arg c "{{.COMPONENT}}" 'has($c)' versions.json >/dev/null
+        msg: unknown component {{.COMPONENT}}
+      - sh: git diff --quiet && git diff --cached --quiet
+        msg: working tree has uncommitted changes
+      - sh: "! git rev-parse -q --verify refs/tags/{{.TAG}} >/dev/null"
+        msg: tag {{.TAG}} exists
+    cmds:
+      - jq --arg c "{{.COMPONENT}}" --arg v "{{.VERSION}}" '.[$c] = $v' versions.json > versions.json.new
+      - mv versions.json.new versions.json
+      - git add versions.json
+      - nix build .#{{.COMPONENT}}-release --no-link
+      - git commit -q -m "release {{.COMPONENT}} v{{.VERSION}}"
+      - git tag -a "{{.TAG}}" -m "{{.MESSAGE}}"
+      - cmd: git push --atomic origin HEAD "{{.TAG}}"
+        if: '[ "{{.PUSH}}" = true ]'
+
+  dry-run:
+    desc: Everything a release does except publishing, into dist/<component> (TAG for an existing tag)
+    requires: { vars: [COMPONENT] }
+    cmds:
+      - task: dist
+        vars: { COMPONENT: "{{.COMPONENT}}", TAG: "{{.TAG}}" }
+      - find dist/{{.COMPONENT}} -type f | sort
+      - cat dist/{{.COMPONENT}}/notes.md
+
+  publish:
+    desc: Publish the release of a pushed tag, e.g. TAG=spikectl/v0.1.0 (CI)
+    requires: { vars: [TAG] }
+    vars:
+      COMPONENT: '{{splitList "/" .TAG | first}}'
+      VERSION: '{{splitList "/" .TAG | last | trimPrefix "v"}}'
+      KIND:
+        sh: nix eval --raw .#lib.components.{{splitList "/" .TAG | first}}.kind
+    preconditions:
+      - sh: '[ "$(jq -r --arg c {{splitList "/" .TAG | first}} ".[\$c]" versions.json)" = "{{splitList "/" .TAG | last | trimPrefix "v"}}" ]'
+        msg: versions.json does not match {{.TAG}}
+      - sh: '[ "$(git rev-parse HEAD)" = "$(git rev-list -n1 {{.TAG}})" ]'
+        msg: HEAD is not {{.TAG}}
+    cmds:
+      - task: dist
+        vars: { COMPONENT: "{{.COMPONENT}}", TAG: "{{.TAG}}" }
+      - task: publish-{{.KIND}}
+        vars: { COMPONENT: "{{.COMPONENT}}", VERSION: "{{.VERSION}}", TAG: "{{.TAG}}" }
+
+  # Build one component's release into dist/<component> and write its notes.
+  dist:
+    internal: true
+    cmds:
+      - rm -rf dist/{{.COMPONENT}} && mkdir -p dist
+      - cp -RL "$(nix build .#{{.COMPONENT}}-release --no-link --print-out-paths)" dist/{{.COMPONENT}}
+      - chmod -R u+w dist/{{.COMPONENT}}
+      - task: notes
+        vars: { COMPONENT: "{{.COMPONENT}}", TAG: "{{.TAG}}" }
+
+  # Notes: the tag's message, then the commits since the component's
+  # previous tag that touched its paths (nix/components.nix).
+  notes:
+    internal: true
+    vars:
+      PATHS:
+        sh: nix eval --raw .#lib.components.{{.COMPONENT}}.paths --apply 'builtins.concatStringsSep " "'
+      TO:
+        sh: git rev-list -n1 {{.TAG | default "HEAD"}}
+      PREV:
+        sh: git describe --tags --abbrev=0 --match '{{.COMPONENT}}/v*' {{.TAG | default "HEAD"}}^ 2>/dev/null || true
+    cmds:
+      - cmd: git tag -l --format='%(contents)' "{{.TAG}}" > dist/{{.COMPONENT}}/notes.md
+        if: '[ -n "{{.TAG}}" ]'
+      - cmd: printf "Unreleased changes.\n\n" > dist/{{.COMPONENT}}/notes.md
+        if: '[ -z "{{.TAG}}" ]'
+      - printf "## Changes\n" >> dist/{{.COMPONENT}}/notes.md
+      # An explicit range: git-cliff's --current and --latest need a previous
+      # tag, or pick the newest tag rather than the checked-out one.
+      - >-
+        git cliff --config cliff.toml --strip all --include-path "{{.PATHS}}"
+        {{if .PREV}}{{.PREV}}..{{end}}{{.TO}} >> dist/{{.COMPONENT}}/notes.md
+
+  # A command-line tool: GitHub release with the archives, then the Homebrew
+  # formula and the Scoop manifest, which point at those archives.
+  publish-cli:
+    internal: true
+    cmds:
+      - task: github-release
+        vars: { COMPONENT: "{{.COMPONENT}}", VERSION: "{{.VERSION}}", TAG: "{{.TAG}}", ASSETS: "dist/{{.COMPONENT}}/archives/*" }
+      - task: push-manifest
+        vars: { REPO_KEY: tap, TOKEN_VAR: TAP_TOKEN, DIR: Formula, FILE: "{{.COMPONENT}}.rb", COMPONENT: "{{.COMPONENT}}", VERSION: "{{.VERSION}}" }
+      - task: push-manifest
+        vars: { REPO_KEY: bucket, TOKEN_VAR: BUCKET_TOKEN, DIR: bucket, FILE: "{{.COMPONENT}}.json", COMPONENT: "{{.COMPONENT}}", VERSION: "{{.VERSION}}" }
+
+  # A service: image and chart to the registry, then the GitHub release,
+  # whose notes name the image digest.
+  publish-service:
+    internal: true
+    vars:
+      REGISTRY:
+        sh: jq -r .registry project.json
+      DIGEST:
+        sh: jq -r '.manifests[0].digest' dist/{{.COMPONENT}}/image/index.json
+    cmds:
+      - regctl image copy ocidir://dist/{{.COMPONENT}}/image:{{.VERSION}} {{.REGISTRY}}/{{.COMPONENT}}:{{.VERSION}}
+      - helm push dist/{{.COMPONENT}}/chart/{{.COMPONENT}}-{{.VERSION}}.tgz oci://{{.REGISTRY}}/charts
+      - |
+        cat >> dist/{{.COMPONENT}}/notes.md <<EOF
+
+        ## Artifacts
+        - Image: \`{{.REGISTRY}}/{{.COMPONENT}}:{{.VERSION}}\` (\`{{.DIGEST}}\`), linux/amd64 and linux/arm64
+        - Chart: \`oci://{{.REGISTRY}}/charts/{{.COMPONENT}}\` version {{.VERSION}}
+        EOF
+      - task: github-release
+        vars: { COMPONENT: "{{.COMPONENT}}", VERSION: "{{.VERSION}}", TAG: "{{.TAG}}", ASSETS: "dist/{{.COMPONENT}}/chart/*" }
+
+  # Only the component named "latest" in project.json becomes the
+  # repository's latest release.
+  github-release:
+    internal: true
+    vars:
+      LATEST:
+        sh: '[ "$(jq -r .latest project.json)" = "{{.COMPONENT}}" ] && echo true || echo false'
+    cmds:
+      - >-
+        gh release create "{{.TAG}}" --verify-tag
+        --title "{{.COMPONENT}} v{{.VERSION}}"
+        --notes-file dist/{{.COMPONENT}}/notes.md
+        --latest={{.LATEST}}
+        {{.ASSETS}}
+
+  # Commit a rendered manifest into the tap or bucket repository. In CI,
+  # TAP_TOKEN and BUCKET_TOKEN are GitHub App tokens for those repositories;
+  # locally, gh's own login is used.
+  push-manifest:
+    internal: true
+    vars:
+      REPO:
+        sh: jq -r .{{.REPO_KEY}} project.json
+      WORK: .cache/{{.REPO_KEY}}
+      # The token from TAP_TOKEN or BUCKET_TOKEN if set, else gh's login.
+      AUTH: t=$(printenv {{.TOKEN_VAR}} || true); if [ -n "$t" ]; then export GH_TOKEN="$t"; fi
+    cmds:
+      - rm -rf {{.WORK}}
+      - '{{.AUTH}}; gh repo clone {{.REPO}} {{.WORK}} -- --depth 1 -q'
+      - mkdir -p {{.WORK}}/{{.DIR}}
+      - cp dist/{{.COMPONENT}}/manifests/{{.FILE}} {{.WORK}}/{{.DIR}}/{{.FILE}}
+      - git -C {{.WORK}} add -A
+      - >-
+        git -C {{.WORK}}
+        -c user.name="${GIT_AUTHOR_NAME:-$(git config user.name)}"
+        -c user.email="${GIT_AUTHOR_EMAIL:-$(git config user.email)}"
+        commit -q -m "{{.COMPONENT}} {{.VERSION}}"
+      - >-
+        {{.AUTH}};
+        git -C {{.WORK}} -c credential.helper= -c 'credential.helper=!gh auth git-credential' push -q

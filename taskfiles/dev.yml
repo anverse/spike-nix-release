@@ -1,0 +1,80 @@
+version: "3"
+
+# The development cluster: k3d with gVisor and a local registry, the
+# environment from dev/helmfile.yaml.gotmpl, e2e as Helm tests.
+#
+#   task dev:up       create the cluster
+#   task dev:deploy   build images, push to the local registry, helmfile sync
+#   task e2e          up + deploy + Helm tests
+#   task dev:down     delete the cluster
+
+vars:
+  CLUSTER: spike-0011
+  KUBECONFIG_FILE: "{{.ROOT_DIR}}/.cache/kubeconfig"
+  # The registry as the host sees it; pods pull from spike-registry:5000.
+  REGISTRY: 127.0.0.1:5111
+  # Values the helmfile reads from the environment.
+  HELMFILE_ENV: >-
+    SPIKED_TAG=$(cat .cache/spiked.tag) E2E_TAG=$(cat .cache/e2e.tag)
+    SPIKED_VERSION=$(jq -r .spiked versions.json)
+    KUBECONFIG={{.KUBECONFIG_FILE}}
+
+tasks:
+  up:
+    desc: Create the k3d cluster with gVisor and a local registry
+    vars:
+      ARCH:
+        sh: docker info --format '{{"{{"}}.Architecture{{"}}"}}' | sed 's/arm64/aarch64/;s/amd64/x86_64/'
+    status:
+      - k3d cluster list {{.CLUSTER}} >/dev/null 2>&1
+    cmds:
+      # Docker on macOS cannot mount /nix/store; copy gVisor out of it.
+      - rm -rf .cache/gvisor && mkdir -p .cache
+      - cp -RL "$(nix build .#gvisor-{{.ARCH}} --no-link --print-out-paths)/bin" .cache/gvisor
+      - chmod -R u+w,a+rX .cache/gvisor
+      - >-
+        K3S_IMAGE="$(jq -r '.k3s.image + ":" + .k3s.tag' pins.json)"
+        GVISOR_DIR="{{.ROOT_DIR}}/.cache/gvisor" DEV_DIR="{{.ROOT_DIR}}/dev"
+        k3d cluster create --config dev/k3d.yaml
+      - k3d kubeconfig get {{.CLUSTER}} > {{.KUBECONFIG_FILE}}
+      - kubectl --kubeconfig {{.KUBECONFIG_FILE}} wait --for=condition=Ready node --all --timeout=120s
+
+  down:
+    desc: Delete the k3d cluster and its registry
+    cmds:
+      - k3d cluster delete {{.CLUSTER}}
+      - rm -f {{.KUBECONFIG_FILE}}
+
+  images:
+    desc: Build the service and e2e images and push them to the local registry, tagged by digest
+    cmds:
+      - for: [spiked, e2e]
+        task: push-image
+        vars: { NAME: "{{.ITEM}}" }
+
+  push-image:
+    internal: true
+    vars:
+      LAYOUT:
+        sh: nix build .#{{.NAME}}-image --no-link --print-out-paths
+      REF:
+        sh: jq -r '.manifests[0].annotations["org.opencontainers.image.ref.name"]' {{.LAYOUT}}/index.json
+      TAG:
+        sh: jq -r '.manifests[0].digest' {{.LAYOUT}}/index.json | cut -c8-19
+    cmds:
+      - regctl image copy --host reg={{.REGISTRY}},tls=disabled ocidir://{{.LAYOUT}}:{{.REF}} {{.REGISTRY}}/{{.NAME}}:{{.TAG}}
+      - echo {{.TAG}} > .cache/{{.NAME}}.tag
+
+  deploy:
+    desc: Deploy the environment (ENV=local or ci) with helmfile
+    deps: [images]
+    cmds:
+      - '{{.HELMFILE_ENV}} helmfile --file dev/helmfile.yaml.gotmpl --environment {{.ENV | default "local"}} sync'
+
+  e2e:
+    internal: true
+    cmds:
+      - task: up
+      - task: deploy
+        vars: { ENV: "{{.ENV}}" }
+      - '{{.HELMFILE_ENV}} helmfile --file dev/helmfile.yaml.gotmpl --environment {{.ENV | default "local"}} test --logs'

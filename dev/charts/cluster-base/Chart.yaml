@@ -1,0 +1,4 @@
+apiVersion: v2
+name: cluster-base
+description: Cluster-wide resources of the development cluster
+version: 0.1.0

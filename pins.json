@@ -1,0 +1,20 @@
+{
+  "distroless": {
+    "image": "gcr.io/distroless/static-debian13",
+    "tag": "nonroot",
+    "digest": "sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3",
+    "hash": "sha256-SIoqikgIkfDKPeJJprT5OirrmsD7oepGozXtBC6Nj7Q="
+  },
+  "gvisor": {
+    "release": "20261005",
+    "hash": {
+      "aarch64": "sha512-G8WL5viBJkztHfj/YdsCBVMavtys4AVYWsVjfFyYeDEGKzZfmfJw7wk5hJ8TA0S4Tg8aZjKUQG95i498jNMmrA==",
+      "x86_64": "sha512-eYaa6aWJNVpG1G/awGjZqVTnQXQf/nfGTjjFbqlVSYwcsE6bzkThzOUVUzPmt2vucjR8ZmG7fHj9L+Oq0ZjI/g=="
+    }
+  },
+  "k3s": {
+    "image": "rancher/k3s",
+    "channel": "stable",
+    "tag": "v1.34.12-k3s1"
+  }
+}

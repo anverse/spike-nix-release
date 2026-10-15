@@ -1,0 +1,34 @@
+# Throwaway cluster for local runs and CI. `task dev:up` sets K3S_IMAGE
+# (from pins.json) and GVISOR_DIR, DEV_DIR (absolute paths); k3d expands
+# environment variables in this file.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: spike-0011
+servers: 1
+agents: 0
+image: ${K3S_IMAGE}
+registries:
+  create:
+    name: spike-registry
+    host: 127.0.0.1
+    hostPort: "5111"
+volumes:
+  - volume: ${GVISOR_DIR}/runsc:/usr/local/bin/runsc
+    nodeFilters: ["server:*"]
+  - volume: ${GVISOR_DIR}/containerd-shim-runsc-v1:/usr/local/bin/containerd-shim-runsc-v1
+    nodeFilters: ["server:*"]
+  - volume: ${GVISOR_DIR}/gvisor-bin:/usr/local/bin/gvisor-bin
+    nodeFilters: ["server:*"]
+  - volume: ${DEV_DIR}/containerd-config-v3.toml.tmpl:/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl
+    nodeFilters: ["server:*"]
+options:
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters: ["server:*"]
+      - arg: --disable=metrics-server
+        nodeFilters: ["server:*"]
+  kubeconfig:
+    updateDefaultKubeconfig: false
+    switchCurrentContext: false

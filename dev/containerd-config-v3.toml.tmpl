@@ -1,0 +1,5 @@
+{{ template "base" . }}
+
+# gVisor: runsc, containerd-shim-runsc-v1 and gvisor-bin/ are mounted into /usr/local/bin.
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runsc]
+  runtime_type = "io.containerd.runsc.v1"

@@ -1,0 +1,8 @@
+{
+  "owner": "anverse",
+  "repo": "spike-nix-release",
+  "registry": "ghcr.io/anverse/spike-nix-release",
+  "tap": "anverse/homebrew-tap",
+  "bucket": "anverse/scoop-bucket",
+  "latest": "spikectl"
+}

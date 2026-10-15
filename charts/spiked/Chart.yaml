@@ -1,0 +1,7 @@
+apiVersion: v2
+name: spiked
+description: Service of the Nix release spike
+type: application
+# Set at packaging time from versions.json.
+version: 0.0.0-dev
+appVersion: 0.0.0-dev

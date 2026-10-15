@@ -1,0 +1,67 @@
+name: install
+
+# Installs a released spikectl the way users do, on every platform.
+on:
+  workflow_call:
+    inputs:
+      version: { type: string, required: true }
+  workflow_dispatch:
+    inputs:
+      version: { type: string, required: true }
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Homebrew on Linux
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v brew; then
+            NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+      - run: brew install ${{ github.repository_owner }}/tap/spikectl
+      - run: spikectl version | tee /dev/stderr | grep -q "spikectl ${{ inputs.version }} "
+      - run: brew test ${{ github.repository_owner }}/tap/spikectl
+
+  scoop:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - shell: pwsh
+        run: |
+          iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
+          $env:PATH = "$env:USERPROFILE\scoop\shims;$env:PATH"
+          scoop bucket add anverse https://github.com/${{ github.repository_owner }}/scoop-bucket
+          scoop install anverse/spikectl
+          $out = spikectl version
+          Write-Output $out
+          if ($out -notmatch "spikectl ${{ inputs.version }} ") { exit 1 }
+
+  nix:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: cachix/install-nix-action@v31
+      - run: nix run "github:${{ github.repository }}?ref=refs/tags/spikectl/v${{ inputs.version }}#spikectl" -- version | tee /dev/stderr | grep -q "spikectl ${{ inputs.version }} "
+
+  latest:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: releases/latest points at spikectl
+        run: |
+          curl -fsSL -o a.tgz "https://github.com/${{ github.repository }}/releases/latest/download/spikectl_${{ inputs.version }}_linux_amd64.tar.gz"
+          tar -xzf a.tgz && ./spikectl version

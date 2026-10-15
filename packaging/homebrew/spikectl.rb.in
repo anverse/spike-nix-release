@@ -1,0 +1,36 @@
+class Spikectl < Formula
+  desc "Command-line tool of the Nix release spike"
+  homepage "@homepage@"
+  version "@version@"
+  license "Apache-2.0"
+
+  on_macos do
+    on_arm do
+      url "@baseUrl@/spikectl_@version@_darwin_arm64.tar.gz"
+      sha256 "@sha_darwin_arm64@"
+    end
+    on_intel do
+      url "@baseUrl@/spikectl_@version@_darwin_amd64.tar.gz"
+      sha256 "@sha_darwin_amd64@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "@baseUrl@/spikectl_@version@_linux_arm64.tar.gz"
+      sha256 "@sha_linux_arm64@"
+    end
+    on_intel do
+      url "@baseUrl@/spikectl_@version@_linux_amd64.tar.gz"
+      sha256 "@sha_linux_amd64@"
+    end
+  end
+
+  def install
+    bin.install "spikectl"
+  end
+
+  test do
+    assert_match "spikectl #{version}", shell_output("#{bin}/spikectl version")
+  end
+end

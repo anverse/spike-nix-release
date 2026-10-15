@@ -1,0 +1,38 @@
+name: update
+
+# Weekly: move pinned dependencies (flake.lock, Go modules, pins.json) to
+# their newest versions and open a pull request when anything changed.
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/nix
+      - run: nix develop --command task update
+      - run: nix develop --command task check
+      - name: Open a pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then echo "everything is current"; exit 0; fi
+          branch="update/$(date -u +%Y-%m-%d)"
+          git switch -c "$branch"
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qam "update pinned dependencies"
+          git push -f origin "$branch"
+          gh pr create --head "$branch" --title "Update pinned dependencies" \
+            --body "$(git show --stat --format='Changed by `task update`:' HEAD)" || true
+          # Pull requests opened with the workflow token start no workflows;
+          # dispatched ones do.
+          gh workflow run ci.yml --ref "$branch"
+          gh workflow run e2e.yml --ref "$branch"

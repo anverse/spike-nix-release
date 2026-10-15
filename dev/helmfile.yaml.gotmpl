@@ -1,0 +1,43 @@
+# The development environments. `local` and `ci` have the same shape;
+# deployments elsewhere use the published chart, not this file.
+environments:
+  local:
+    values:
+      - expectGvisor: true
+  ci:
+    values:
+      - expectGvisor: true
+---
+helmDefaults:
+  kubeContext: k3d-spike-0011
+  createNamespace: true
+  wait: true
+  timeout: 300
+
+releases:
+  - name: cluster-base
+    namespace: kube-system
+    chart: ./charts/cluster-base
+
+  - name: spiked
+    namespace: spiked
+    chart: ../charts/spiked
+    needs: [kube-system/cluster-base]
+    values:
+      - image:
+          repository: spike-registry:5000/spiked
+          tag: {{ requiredEnv "SPIKED_TAG" | quote }}
+        runtimeClassName: gvisor
+
+  - name: e2e
+    namespace: spiked
+    chart: ../test/e2e/chart
+    needs: [spiked/spiked]
+    values:
+      - image:
+          repository: spike-registry:5000/e2e
+          tag: {{ requiredEnv "E2E_TAG" | quote }}
+        url: http://spiked.spiked.svc
+        version: {{ requiredEnv "SPIKED_VERSION" | quote }}
+        runtimeClassName: gvisor
+        expectGvisor: {{ .Values.expectGvisor }}

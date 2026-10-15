@@ -1,0 +1,33 @@
+version: "3"
+
+# Checks of this spike only.
+
+tasks:
+  verify-notes:
+    desc: Cut releases in a throwaway repository and check the notes stay per component
+    cmds:
+      - rm -rf .cache/fixture && mkdir -p .cache/fixture
+      - git ls-files -co --exclude-standard | grep -v '^results/' | rsync -a --files-from=- . .cache/fixture/
+      - task: verify-notes-run
+
+  verify-notes-run:
+    internal: true
+    dir: .cache/fixture
+    cmds:
+      - git init -q -b main
+      - git config user.name spike && git config user.email spike@example.org && git config commit.gpgsign false && git config tag.gpgsign false
+      - git add -A && git commit -q -m "import the spike"
+      - echo '// first change' >> cmd/spikectl/main.go && git commit -qam "teach spikectl something"
+      - echo '// first change' >> cmd/spiked/main.go && git commit -qam "teach spiked something"
+      - echo '// shared' >> internal/buildinfo/buildinfo.go && git commit -qam "change shared build info"
+      - echo '# chart' >> charts/spiked/values.yaml && git commit -qam "document a chart value"
+      - task release COMPONENT=spikectl VERSION=0.1.0 MESSAGE="First spikectl release." PUSH=false
+      - task release COMPONENT=spiked VERSION=0.1.0 MESSAGE="First spiked release." PUSH=false
+      - echo '// second change' >> cmd/spikectl/main.go && git commit -qam "teach spikectl more"
+      - echo '// second change' >> cmd/spiked/main.go && git commit -qam "teach spiked more"
+      - task release COMPONENT=spikectl VERSION=0.2.0 MESSAGE="Second spikectl release." PUSH=false
+      - git log --oneline --decorate
+      - for: [spikectl/v0.1.0, spiked/v0.1.0, spikectl/v0.2.0]
+        cmd: git checkout -q {{.ITEM}} && task release:dry-run COMPONENT={{splitList "/" .ITEM | first}} TAG={{.ITEM}} >/dev/null && echo "### {{.ITEM}}" && cat dist/{{splitList "/" .ITEM | first}}/notes.md
+      - git checkout -q main
+      - jq -c . versions.json
