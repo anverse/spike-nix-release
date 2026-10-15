@@ -15,6 +15,6 @@
   "k3s": {
     "image": "rancher/k3s",
     "channel": "stable",
-    "tag": "v1.34.12-k3s1"
+    "tag": "v1.36.5-k3s1"
   }
 }
