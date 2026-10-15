@@ -15,7 +15,7 @@ jobs:
       component: ${{ steps.tag.outputs.component }}
       version: ${{ steps.tag.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: tag
@@ -26,14 +26,14 @@ jobs:
       # Short-lived tokens for the tap and the bucket from the organization's
       # release bot apps; the workflow's own token cannot push to other
       # repositories.
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         id: tap
         with:
           app-id: ${{ secrets.HOMEBREW_BOT_APP_ID }}
           private-key: ${{ secrets.HOMEBREW_BOT_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: homebrew-tap
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         id: bucket
         with:
           app-id: ${{ secrets.SCOOP_BOT_APP_ID }}

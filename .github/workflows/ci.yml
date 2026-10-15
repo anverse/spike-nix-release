@@ -16,7 +16,7 @@ jobs:
         runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: ./.github/actions/nix
@@ -31,7 +31,7 @@ jobs:
           sha256sum dist/spikectl/manifests/* dist/spiked/chart/* >> digests.txt
           echo "image $(jq -r '.manifests[0].digest' dist/spiked/image/index.json)" >> digests.txt
           cat digests.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: digests-${{ matrix.runner }}
           path: digests.txt
@@ -41,7 +41,7 @@ jobs:
     needs: verify
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
       - run: |
           ls
           for d in digests-*/digests.txt; do diff -u digests-ubuntu-24.04/digests.txt "$d"; done
