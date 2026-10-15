@@ -55,6 +55,9 @@ tasks:
       - sh: '[ "$(git rev-parse HEAD)" = "$(git rev-list -n1 {{.TAG}})" ]'
         msg: HEAD is not {{.TAG}}
     cmds:
+      # actions/checkout turns annotated tags into lightweight ones; fetch
+      # the real tag, whose message starts the release notes.
+      - git fetch -q --force origin "refs/tags/{{.TAG}}:refs/tags/{{.TAG}}"
       - task: dist
         vars: { COMPONENT: "{{.COMPONENT}}", TAG: "{{.TAG}}" }
       - task: publish-{{.KIND}}
