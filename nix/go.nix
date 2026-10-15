@@ -51,6 +51,8 @@ in
       inherit name version goos goarch;
       args = {
         subPackages = [ "cmd/${name}" ];
+        # What `nix run` starts; pname is shared by all builds.
+        meta.mainProgram = name;
         ldflags = [ "-s" "-w" "-X github.com/anverse/spike-nix-release/internal/buildinfo.Version=${version}" ];
         # Cross builds land in bin/<goos>_<goarch>/; move them to bin/.
         postInstall = ''
