@@ -85,7 +85,8 @@ tasks:
       PREV:
         sh: git describe --tags --abbrev=0 --match '{{.COMPONENT}}/v*' {{.TAG | default "HEAD"}}^ 2>/dev/null || true
     cmds:
-      - cmd: git tag -l --format='%(contents)' "{{.TAG}}" > dist/{{.COMPONENT}}/notes.md
+      # Subject and body only; a signed tag's signature stays out.
+      - cmd: git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "{{.TAG}}" > dist/{{.COMPONENT}}/notes.md
         if: '[ -n "{{.TAG}}" ]'
       - cmd: printf "Unreleased changes.\n\n" > dist/{{.COMPONENT}}/notes.md
         if: '[ -z "{{.TAG}}" ]'
