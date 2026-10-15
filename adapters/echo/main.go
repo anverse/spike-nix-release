@@ -37,7 +37,7 @@ func main() {
 			"message": r.URL.Query().Get("message"),
 		})
 	})
-	slog.Info("spiked-echo listening", "addr", ":8080", "version", buildVersion)
+	slog.Info("echo adapter listening", "addr", ":8080", "version", buildVersion)
 	if err := http.ListenAndServe(":8080", mux); err != nil {
 		slog.Error("serve", "err", err)
 		os.Exit(1)
