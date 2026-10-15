@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Done. Part A 2026-10-14 (darwin/arm64, local), part B 2026-10-15 (GitHub, [results](results/part-b-github.md)), part C 2026-10-15 (flake apps, Go tools, stable nixpkgs). Package visibility and cleanup open. |
+| Status | Done. Part A 2026-10-14 (darwin/arm64, local), part B 2026-10-15 (GitHub, [results](results/part-b-github.md)), part C 2026-10-15 (flake apps, Go tools, stable nixpkgs), part D 2026-10-15 (one Go module per component, cobra). Package visibility and cleanup open. |
 | Question | Can a Nix flake build every artifact of a monorepo (a CLI for three operating systems, multi-platform images, a Helm chart, Homebrew and Scoop manifests), with Taskfile as the only entry point and small CLIs publishing one GitHub release per component tag, identically on a laptop and in CI? |
 | Feeds into | [ADR-0023](../../spec/adr/0023-nix-as-the-single-build-system.md) (Nix as the single build system), [ADR-0024](../../spec/adr/0024-releases-per-component.md) (releases per component), [ADR-0019](../../spec/adr/0019-production-like-development-environment.md) and [development.md](../../spec/development.md) (environment, e2e as Helm tests, CI), [milestone v0.0](../../spec/milestone/v0.0.md), roadmap open question 28 |
 | Builds on | Spike 0002 (k3d with gVisor) |
@@ -124,4 +124,23 @@ Rules applied: everything a person or CI does is a flake package, check or app; 
 24. **Cluster DNS is not ready when the node is**: one local e2e run failed with refused DNS lookups. `dev up` now waits for the CoreDNS deployment.
 25. **Release-note paths cover source, not build files.** Changes to `nix/`, `flake.lock` or `pins.json` change artifacts but appear in no component's notes. Acceptable for now; a component could list them if its users care.
 26. **Logging in from a job** (`docker login`, `helm registry login` with the workflow token) lets the pull test work while packages are private.
+
+## Part D: one Go module per component
+
+Every component is its own Go module: `spikectl`, `spiked`, the adapter `spiked-echo` (`adapters/echo`, with `github.com/google/uuid` that no other module carries), plus `api` (the shared contract), `tools` and `test/e2e`. Components use only `api`, through a replace directive; `go.work` ties the modules together for development. The tools use cobra and are written as numbered steps with named helpers.
+
+| Result |
+|---|
+| `nix flake check` builds and tests each module on its own: six test checks (vet, gofmt, tests) plus every artifact. Builds use each module's `go.mod` (`GOWORK=off`). |
+| `nix run .#update -- go` updates each module separately: it moved only `tools` (pflag 1.0.9 to 1.0.10), and only the `tools` hash changed. |
+| Notes follow modules: an `api` change appears in `spiked` and `spiked-echo`, an adapter change only in `spiked-echo`, neither in `spikectl`. Releases `spiked-echo` 0.1.0, `spiked` 0.3.0 and `spikectl` 0.3.0 passed every pull and install check. |
+| The release tool's help and completion come from cobra (`nix run .#release -- --help`). |
+
+### Findings (part D)
+
+27. **Per-module builds work with nixpkgs' `buildGoModule`**: `modRoot` selects the module, the source is the module plus `api`, and each module has its own dependency hash in `nix/go-modules.json`.
+28. **Vendor mode would put the local `api` into every hash.** Then any `api` change invalidates the hash of every module using it. With `proxyVendor`, the dependency download is the module cache of external modules only; `api` comes from the source. A module without external dependencies has no hash (`null`), local ones included.
+29. **The release tool needs Go** (`go mod edit` reads replace directives), so Go is one of its pinned tools. Linux runners have Go installed and hid the gap; the macOS runner showed it.
+30. **cobra uses `--flags`**: every call site (Nix build, workflows) had to change from `-flag`.
+31. **If the tools' own hash is stale, `nix run .#update` cannot build.** The weekly run never hits this (the tool builds before it updates anything); by hand, `go run ./tools/update go` in the development shell works without the hash.
 
