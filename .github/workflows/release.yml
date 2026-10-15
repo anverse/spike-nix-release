@@ -15,7 +15,7 @@ jobs:
       component: ${{ steps.tag.outputs.component }}
       version: ${{ steps.tag.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: tag
@@ -26,14 +26,14 @@ jobs:
       # Short-lived tokens for the tap and the bucket from the organization's
       # release bot apps; the workflow's own token cannot push to other
       # repositories.
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         id: tap
         with:
           app-id: ${{ secrets.HOMEBREW_BOT_APP_ID }}
           private-key: ${{ secrets.HOMEBREW_BOT_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: homebrew-tap
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         id: bucket
         with:
           app-id: ${{ secrets.SCOOP_BOT_APP_ID }}
@@ -42,10 +42,8 @@ jobs:
           repositories: scoop-bucket
       - name: Log in to ghcr.io
         env:
-          TOKEN: ${{ github.token }}
-        run: |
-          echo "$TOKEN" | nix develop --command regctl registry login ghcr.io -u "${{ github.actor }}" --pass-stdin
-          echo "$TOKEN" | nix develop --command helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          GITHUB_TOKEN: ${{ github.token }}
+        run: nix run .#release -- login
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -53,7 +51,9 @@ jobs:
           BUCKET_TOKEN: ${{ steps.bucket.outputs.token }}
           GIT_AUTHOR_NAME: github-actions[bot]
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: nix develop --command task release:publish TAG="$GITHUB_REF_NAME"
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: nix run .#release -- publish "$GITHUB_REF_NAME"
 
   install-cli:
     needs: release
@@ -62,6 +62,8 @@ jobs:
     with:
       version: ${{ needs.release.outputs.version }}
 
+  # Pull and run the published image, render the published chart. Logged
+  # in, so it works while the packages are private.
   pull-service:
     needs: release
     if: needs.release.outputs.component == 'spiked'
@@ -70,6 +72,11 @@ jobs:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
+      - env:
+          TOKEN: ${{ github.token }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run the published image
         run: |
           docker run -d --name spiked -p 8080:8080 ghcr.io/${{ github.repository }}/spiked:${{ needs.release.outputs.version }}

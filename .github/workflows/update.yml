@@ -16,10 +16,10 @@ jobs:
   update:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/nix
-      - run: nix develop --command task update
-      - run: nix develop --command task check
+      - run: nix run .#update
+      - run: nix flake check --print-build-logs
       - name: Open a pull request
         env:
           GH_TOKEN: ${{ github.token }}
@@ -31,7 +31,7 @@ jobs:
             commit -qam "update pinned dependencies"
           git push -f origin "$branch"
           gh pr create --head "$branch" --title "Update pinned dependencies" \
-            --body "$(git show --stat --format='Changed by `task update`:' HEAD)" || true
+            --body "$(git show --stat --format='Changed by `nix run .#update`:' HEAD)" || true
           # Pull requests opened with the workflow token start no workflows;
           # dispatched ones do.
           gh workflow run ci.yml --ref "$branch"
