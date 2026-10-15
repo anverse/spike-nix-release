@@ -6,7 +6,7 @@
 #   release/manifests/  <name>.rb (Homebrew), <name>.json (Scoop), rendered
 #                       by `release manifests` from packaging/ and the checksums
 { pkgs, go, releaseTool }:
-{ name, version }:
+{ name, version, module }:
 let
   platforms = [
     { goos = "linux"; goarch = "amd64"; }
@@ -25,7 +25,7 @@ let
   # owners and order, so the same source always gives the same checksum.
   archive = { goos, goarch }:
     let
-      bin = go.binary { inherit name version goos goarch; };
+      bin = go.binary { inherit module name version goos goarch; };
       exe = if goos == "windows" then "${name}.exe" else name;
       file = archiveName goos goarch;
     in
@@ -52,11 +52,11 @@ let
     # Homebrew formula and Scoop manifest from packaging/<tool>/<name>.*.tmpl,
     # with the URLs and checksums of the archives above.
     ${releaseTool}/bin/release manifests \
-      -component ${name} -version ${version} -project ${projectFile} \
-      -archives $out/archives -templates ${../packaging} -out $out/manifests
+      --component ${name} --version ${version} --project ${projectFile}/project.json \
+      --archives $out/archives --templates ${../packaging} --out $out/manifests
   '';
 in
 {
-  native = go.binary { inherit name version; goos = pkgs.go.GOOS; goarch = pkgs.go.GOARCH; };
+  native = go.binary { inherit module name version; goos = pkgs.go.GOOS; goarch = pkgs.go.GOARCH; };
   inherit release;
 }

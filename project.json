@@ -8,11 +8,24 @@
   "components": {
     "spikectl": {
       "kind": "cli",
-      "paths": ["cmd/spikectl", "internal/buildinfo", "packaging", "go.mod", "go.sum"]
+      "module": "spikectl",
+      "paths": [
+        "packaging"
+      ]
     },
     "spiked": {
       "kind": "service",
-      "paths": ["cmd/spiked", "internal/buildinfo", "charts/spiked", "go.mod", "go.sum"]
+      "module": "spiked",
+      "paths": [
+        "charts/spiked"
+      ]
+    },
+    "spiked-echo": {
+      "kind": "service",
+      "module": "adapters/echo",
+      "paths": [
+        "charts/spiked-echo"
+      ]
     }
   }
 }

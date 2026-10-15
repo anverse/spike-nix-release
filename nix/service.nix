@@ -4,9 +4,9 @@
 #   chart    charts/<name>, packaged with version and appVersion = <version>
 #   release  image/ and chart/ together, what the release pipeline publishes
 { pkgs, go, buildImage, project }:
-{ name, version }:
+{ name, version, module }:
 let
-  binary = goarch: go.binary { inherit name version goarch; goos = "linux"; };
+  binary = goarch: go.binary { inherit module name version goarch; goos = "linux"; };
 
   image = buildImage {
     inherit name version;
@@ -37,7 +37,7 @@ let
     '';
 in
 {
-  native = go.binary { inherit name version; goos = pkgs.go.GOOS; goarch = pkgs.go.GOARCH; };
+  native = go.binary { inherit module name version; goos = pkgs.go.GOOS; goarch = pkgs.go.GOARCH; };
   inherit image chart;
   release = pkgs.linkFarm "${name}-${version}-release" [
     { name = "image"; path = image; }

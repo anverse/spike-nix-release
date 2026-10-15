@@ -1,0 +1,40 @@
+# Container image. The tag defaults to the chart's appVersion.
+image:
+  repository: ghcr.io/anverse/spike-nix-release/spiked-echo
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+# The port the adapter listens on inside the pod.
+port: 8080
+
+service:
+  port: 80
+  annotations: {}
+
+# RuntimeClass for the pod, e.g. gvisor. Empty uses the cluster default.
+runtimeClassName: ""
+
+resources: {}
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+# Additional environment variables, as in a container spec.
+extraEnv: []

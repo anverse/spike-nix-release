@@ -1,93 +1,110 @@
-// release cuts and publishes component releases (ADR-0024).
-//
-//	release cut <component> <version> <message> [-no-push]
-//	release notes <component> [<tag>]
-//	release dist <component> [<tag>]
-//	release login
-//	release publish <tag>
-//	release manifests -component C -version V -archives DIR -templates DIR -out DIR
-//
-// Run from the repository root, through `nix run .#release -- …`.
+// release cuts and publishes component releases (ADR-0024). Run it from the
+// repository root, through `nix run .#release -- <command>`.
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
-const usage = `usage:
-  release cut <component> <version> <message> [-no-push]   bump, commit, tag, push
-  release notes <component> [<tag>]                         release notes to stdout
-  release dist <component> [<tag>]                          build into dist/<component>, with notes
-  release login                                             log in to ghcr.io (CI: GITHUB_ACTOR, GITHUB_TOKEN)
-  release publish <tag>                                     publish a pushed tag (CI)
-  release manifests ...                                     render Homebrew and Scoop manifests (Nix build)`
-
 func main() {
-	if len(os.Args) < 2 {
-		fail(fmt.Errorf("%s", usage))
+	root := &cobra.Command{
+		Use:          "release",
+		Short:        "Cut and publish component releases",
+		SilenceUsage: true,
 	}
-	args := os.Args[2:]
-	var err error
-	switch os.Args[1] {
-	case "cut":
-		fs := flag.NewFlagSet("cut", flag.ExitOnError)
-		noPush := fs.Bool("no-push", false, "commit and tag, but do not push")
-		fs.Parse(reorder(args))
-		if fs.NArg() != 3 {
-			fail(fmt.Errorf("%s", usage))
-		}
-		err = cut(fs.Arg(0), fs.Arg(1), fs.Arg(2), !*noPush)
-	case "notes":
-		var text string
-		text, err = notes(arg(args, 0), optional(args, 1))
-		fmt.Print(text)
-	case "dist":
-		err = dist(arg(args, 0), optional(args, 1))
-	case "login":
-		err = login()
-	case "publish":
-		err = publish(arg(args, 0))
-	case "manifests":
-		err = manifestsCommand(args)
-	default:
-		err = fmt.Errorf("%s", usage)
-	}
-	if err != nil {
-		fail(err)
+	root.AddCommand(
+		cutCommand(),
+		notesCommand(),
+		distCommand(),
+		loginCommand(),
+		publishCommand(),
+		manifestsCommand(),
+	)
+	if err := root.Execute(); err != nil {
+		os.Exit(1)
 	}
 }
 
-func arg(args []string, i int) string {
-	if i >= len(args) {
-		fail(fmt.Errorf("%s", usage))
+func cutCommand() *cobra.Command {
+	var noPush bool
+	cmd := &cobra.Command{
+		Use:   "cut <component> <version> <summary>",
+		Short: "Write the version, commit, tag and push a release",
+		Long:  "The pushed tag starts the release workflow. The summary starts the release notes.",
+		Args:  cobra.ExactArgs(3),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return cut(args[0], args[1], args[2], !noPush)
+		},
 	}
-	return args[i]
+	cmd.Flags().BoolVar(&noPush, "no-push", false, "commit and tag, but do not push")
+	return cmd
 }
 
-func optional(args []string, i int) string {
-	if i >= len(args) {
-		return ""
+func notesCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "notes <component> [<tag>]",
+		Short: "Print the release notes; without a tag, of the unreleased changes",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			text, err := notes(args[0], optionalArg(args, 1))
+			fmt.Fprint(cmd.OutOrStdout(), text)
+			return err
+		},
 	}
-	return args[i]
 }
 
-// reorder moves flags in front of positional arguments, so -no-push may
-// come last.
-func reorder(args []string) []string {
-	var flags, rest []string
-	for _, a := range args {
-		if len(a) > 1 && a[0] == '-' {
-			flags = append(flags, a)
-		} else {
-			rest = append(rest, a)
-		}
+func distCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "dist <component> [<tag>]",
+		Short: "Build a release into dist/<component>, with its notes, without publishing",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return dist(args[0], optionalArg(args, 1))
+		},
 	}
-	return append(flags, rest...)
 }
 
-func fail(err error) {
-	fmt.Fprintln(os.Stderr, "release:", err)
-	os.Exit(1)
+func loginCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "login",
+		Short: "Log in to ghcr.io with GITHUB_ACTOR and GITHUB_TOKEN (CI)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { return login() },
+	}
+}
+
+func publishCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "publish <tag>",
+		Short: "Publish the release of a pushed tag (CI)",
+		Args:  cobra.ExactArgs(1),
+		RunE:  func(_ *cobra.Command, args []string) error { return publish(args[0]) },
+	}
+}
+
+func manifestsCommand() *cobra.Command {
+	var m manifestsInput
+	cmd := &cobra.Command{
+		Use:   "manifests",
+		Short: "Render the Homebrew formula and the Scoop manifest (used by the Nix build)",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { return renderManifests(m) },
+	}
+	cmd.Flags().StringVar(&m.Component, "component", "", "component name")
+	cmd.Flags().StringVar(&m.Version, "version", "", "version")
+	cmd.Flags().StringVar(&m.Project, "project", "project.json", "the project file")
+	cmd.Flags().StringVar(&m.Archives, "archives", "", "directory with the archives and checksums.txt")
+	cmd.Flags().StringVar(&m.Templates, "templates", "", "directory with <tool>/<component>.*.tmpl")
+	cmd.Flags().StringVar(&m.Out, "out", "", "output directory")
+	return cmd
+}
+
+func optionalArg(args []string, i int) string {
+	if i < len(args) {
+		return args[i]
+	}
+	return ""
 }

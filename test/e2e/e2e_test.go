@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/anverse/spike-nix-release/api/version"
 )
 
 // get requests path from the service. A pod that is ready is not reachable
@@ -40,12 +42,17 @@ func TestHealth(t *testing.T) {
 }
 
 func TestVersion(t *testing.T) {
-	var v map[string]string
-	if err := json.NewDecoder(get(t, "/version").Body).Decode(&v); err != nil {
+	var info version.Info
+	if err := json.NewDecoder(get(t, "/version").Body).Decode(&info); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("spiked reports %v", v)
-	if want := os.Getenv("SPIKED_VERSION"); want != "" && v["version"] != want {
-		t.Fatalf("version %q, want %q", v["version"], want)
+	t.Logf("spiked reports %+v", info)
+	if want := os.Getenv("SPIKED_VERSION"); want != "" {
+		if got := info.Version; got != want {
+			t.Errorf("version=%s, want=%s", got, want)
+		}
+	}
+	if got, want := info.Component, "spiked"; got != want {
+		t.Errorf("component=%s, want=%s", got, want)
 	}
 }

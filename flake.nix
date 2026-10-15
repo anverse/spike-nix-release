@@ -27,7 +27,15 @@
       buildsFor = pkgs:
         let
           goBuilds = import ./nix/go.nix { inherit pkgs; };
-          tool = name: goBuilds.binary { inherit name; version = "dev"; goos = pkgs.go.GOOS; goarch = pkgs.go.GOARCH; dir = "tools"; };
+          # The repository's own tools: module tools, one main package each.
+          tool = name: goBuilds.binary {
+            inherit name;
+            module = "tools";
+            package = name;
+            version = "dev";
+            goos = pkgs.go.GOOS;
+            goarch = pkgs.go.GOARCH;
+          };
           releaseTool = tool "release";
 
           buildImage = import ./nix/image.nix { inherit pkgs; };
@@ -35,8 +43,10 @@
           service = import ./nix/service.nix { inherit pkgs buildImage project; go = goBuilds; };
           gvisor = import ./nix/gvisor.nix { inherit pkgs; };
 
-          spikectl = cli { name = "spikectl"; version = versions.spikectl; };
-          spiked = service { name = "spiked"; version = versions.spiked; };
+          # The components: one Go module each.
+          spikectl = cli { name = "spikectl"; module = "spikectl"; version = versions.spikectl; };
+          spiked = service { name = "spiked"; module = "spiked"; version = versions.spiked; };
+          spiked-echo = service { name = "spiked-echo"; module = "adapters/echo"; version = versions.spiked-echo; };
 
           # A tool as an app: the Go program, with the commands it calls
           # pinned by this flake. Docker and Nix come from the host.
@@ -59,21 +69,30 @@
             spiked-chart = spiked.chart;
             spiked-release = spiked.release;
 
+            spiked-echo = spiked-echo.native;
+            spiked-echo-image = spiked-echo.image;
+            spiked-echo-chart = spiked-echo.chart;
+            spiked-echo-release = spiked-echo.release;
+
             # Development cluster only: the e2e suite as an image, gVisor for
             # the node, and the pinned base image on its own for `update`.
             e2e-image = buildImage {
               name = "e2e";
               version = "dev";
               binaries = {
-                amd64 = goBuilds.testBinary { version = "dev"; goos = "linux"; goarch = "amd64"; };
-                arm64 = goBuilds.testBinary { version = "dev"; goos = "linux"; goarch = "arm64"; };
+                amd64 = goBuilds.testBinary { goos = "linux"; goarch = "amd64"; };
+                arm64 = goBuilds.testBinary { goos = "linux"; goarch = "arm64"; };
               };
               args = [ "-test.v" ];
             };
             gvisor-aarch64 = gvisor.aarch64;
             gvisor-x86_64 = gvisor.x86_64;
             distroless = import ./nix/distroless.nix { inherit pkgs; };
-          };
+          }
+          # The dependency download of each module, for `nix run .#update -- go`.
+          // lib.listToAttrs (map
+            (module: lib.nameValuePair "go-deps-${goBuilds.label module}" (goBuilds.dependencies module))
+            goBuilds.modulesWithDependencies);
 
           apps = with pkgs; {
             release = app "release" "Cut, dry-run and publish component releases"
@@ -84,7 +103,10 @@
               [ go git nix-update regclient ];
           };
 
-          checks = { go-tests = goBuilds.tests; };
+          # go vet, gofmt and the tests of every module.
+          checks = lib.listToAttrs (map
+            (module: lib.nameValuePair "go-test-${goBuilds.label module}" (goBuilds.tests module))
+            goBuilds.modules);
         };
     in
     {
@@ -94,7 +116,9 @@
       # Every release artifact plus go vet, gofmt and the unit tests.
       checks = forAllSystems (pkgs:
         let b = buildsFor pkgs; in
-        b.checks // removeAttrs b.packages [ "gvisor-aarch64" "gvisor-x86_64" "distroless" ]);
+        b.checks // lib.filterAttrs
+          (name: _: !(lib.hasPrefix "gvisor-" name || lib.hasPrefix "go-deps-" name || name == "distroless"))
+          b.packages);
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {

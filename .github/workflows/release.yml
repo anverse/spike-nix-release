@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       component: ${{ steps.tag.outputs.component }}
+      kind: ${{ steps.tag.outputs.kind }}
       version: ${{ steps.tag.outputs.version }}
     steps:
       - uses: actions/checkout@v7
@@ -20,7 +21,9 @@ jobs:
           fetch-depth: 0
       - id: tag
         run: |
-          echo "component=${GITHUB_REF_NAME%%/*}" >> "$GITHUB_OUTPUT"
+          component=${GITHUB_REF_NAME%%/*}
+          echo "component=$component" >> "$GITHUB_OUTPUT"
+          echo "kind=$(jq -r --arg c "$component" '.components[$c].kind' project.json)" >> "$GITHUB_OUTPUT"
           echo "version=${GITHUB_REF_NAME##*/v}" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/nix
       # Short-lived tokens for the tap and the bucket from the organization's
@@ -57,7 +60,7 @@ jobs:
 
   install-cli:
     needs: release
-    if: needs.release.outputs.component == 'spikectl'
+    if: needs.release.outputs.kind == 'cli'
     uses: ./.github/workflows/install.yml
     with:
       version: ${{ needs.release.outputs.version }}
@@ -66,7 +69,7 @@ jobs:
   # in, so it works while the packages are private.
   pull-service:
     needs: release
-    if: needs.release.outputs.component == 'spiked'
+    if: needs.release.outputs.kind == 'service'
     strategy:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
@@ -79,8 +82,8 @@ jobs:
           echo "$TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run the published image
         run: |
-          docker run -d --name spiked -p 8080:8080 ghcr.io/${{ github.repository }}/spiked:${{ needs.release.outputs.version }}
+          docker run -d --name service -p 8080:8080 ghcr.io/${{ github.repository }}/${{ needs.release.outputs.component }}:${{ needs.release.outputs.version }}
           sleep 2
           curl -fsS localhost:8080/version
       - name: Render the published chart
-        run: helm template t oci://ghcr.io/${{ github.repository }}/charts/spiked --version ${{ needs.release.outputs.version }}
+        run: helm template t oci://ghcr.io/${{ github.repository }}/charts/${{ needs.release.outputs.component }} --version ${{ needs.release.outputs.version }}

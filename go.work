@@ -1,0 +1,12 @@
+// All Go modules of the repository, for development: one editor session,
+// tests across modules. Builds use each module's own go.mod (GOWORK=off).
+go 1.26.0
+
+use (
+	./adapters/echo
+	./api
+	./spiked
+	./spikectl
+	./test/e2e
+	./tools
+)

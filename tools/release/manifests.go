@@ -2,18 +2,26 @@ package main
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
 
-	"github.com/anverse/spike-nix-release/tools/internal/project"
+	"github.com/anverse/spike-nix-release/tools/internal/repo"
 )
 
-// manifestData is what the Homebrew and Scoop templates see. URL and
-// SHA256 are keyed by platform, e.g. .URL.darwin_arm64.
+// manifestsInput is what `release manifests` reads.
+type manifestsInput struct {
+	Component, Version string
+	Project            string // project.json
+	Archives           string // directory with the archives and checksums.txt
+	Templates          string // directory with <tool>/<component>.*.tmpl
+	Out                string // output directory
+}
+
+// manifestData is what the templates see. URL and SHA256 are keyed by
+// platform: {{.URL.darwin_arm64}}, {{.SHA256.darwin_arm64}}.
 type manifestData struct {
 	Version  string
 	Homepage string
@@ -21,83 +29,75 @@ type manifestData struct {
 	SHA256   map[string]string
 }
 
-// manifestsCommand renders every <component>.*.tmpl under -templates into
-// -out, with the archives' URLs and checksums. The Nix build of a CLI
-// release runs it, so the manifests always match the archives.
-func manifestsCommand(args []string) error {
-	fs := flag.NewFlagSet("manifests", flag.ExitOnError)
-	component := fs.String("component", "", "component name")
-	version := fs.String("version", "", "version")
-	projectDir := fs.String("project", ".", "directory with project.json")
-	archives := fs.String("archives", "", "directory with the archives and checksums.txt")
-	templates := fs.String("templates", "", "directory with the templates")
-	out := fs.String("out", "", "output directory")
-	fs.Parse(args)
-
-	p, err := project.Load(*projectDir)
+// renderManifests renders every <component>.*.tmpl into the output
+// directory, with the URLs and checksums of the archives. The Nix build of
+// a CLI release runs it, so the manifests always match the archives.
+func renderManifests(in manifestsInput) error {
+	project, err := repo.LoadProjectFile(in.Project)
 	if err != nil {
 		return err
 	}
-	data, err := readArchives(p, *component, *version, *archives)
+	data, err := readArchives(project, in.Component, in.Version, in.Archives)
 	if err != nil {
 		return err
 	}
-	return renderManifests(*component, *templates, *out, data)
+	templates, err := filepath.Glob(filepath.Join(in.Templates, "*", in.Component+".*.tmpl"))
+	if err != nil || len(templates) == 0 {
+		return fmt.Errorf("no templates for %s in %s", in.Component, in.Templates)
+	}
+	if err := os.MkdirAll(in.Out, 0o755); err != nil {
+		return err
+	}
+	for _, t := range templates {
+		out := filepath.Join(in.Out, strings.TrimSuffix(filepath.Base(t), ".tmpl"))
+		if err := render(t, out, data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// readArchives reads checksums.txt and derives each archive's platform from
-// its name, <component>_<version>_<os>_<arch>.<ext>.
-func readArchives(p project.Project, component, version, dir string) (manifestData, error) {
-	tag := project.Tag(component, version)
+// readArchives reads checksums.txt. Each archive's platform comes from its
+// name, <component>_<version>_<os>_<arch>.<extension>.
+func readArchives(project repo.Project, component, version, dir string) (manifestData, error) {
 	data := manifestData{
 		Version:  version,
-		Homepage: fmt.Sprintf("https://github.com/%s/%s", p.Owner, p.Repo),
+		Homepage: fmt.Sprintf("https://github.com/%s/%s", project.Owner, project.Repo),
 		URL:      map[string]string{},
 		SHA256:   map[string]string{},
 	}
+	downloads := data.Homepage + "/releases/download/" + repo.Tag(component, version)
+	prefix := component + "_" + version + "_"
+
 	f, err := os.Open(filepath.Join(dir, "checksums.txt"))
 	if err != nil {
 		return data, err
 	}
 	defer f.Close()
-	prefix := component + "_" + version + "_"
 	lines := bufio.NewScanner(f)
 	for lines.Scan() {
-		sum, file, ok := strings.Cut(lines.Text(), "  ")
+		checksum, file, ok := strings.Cut(lines.Text(), "  ")
 		if !ok || !strings.HasPrefix(file, prefix) {
 			continue
 		}
 		platform := strings.TrimPrefix(file, prefix)
 		platform = strings.TrimSuffix(strings.TrimSuffix(platform, ".tar.gz"), ".zip")
-		data.URL[platform] = fmt.Sprintf("%s/releases/download/%s/%s", data.Homepage, tag, file)
-		data.SHA256[platform] = sum
+		data.URL[platform] = downloads + "/" + file
+		data.SHA256[platform] = checksum
 	}
 	return data, lines.Err()
 }
 
-func renderManifests(component, templates, out string, data manifestData) error {
-	paths, err := filepath.Glob(filepath.Join(templates, "*", component+".*.tmpl"))
-	if err != nil || len(paths) == 0 {
-		return fmt.Errorf("no templates for %s in %s", component, templates)
-	}
-	if err := os.MkdirAll(out, 0o755); err != nil {
+func render(templateFile, outFile string, data manifestData) error {
+	// A platform without an archive fails, instead of rendering an empty hash.
+	t, err := template.New(filepath.Base(templateFile)).Option("missingkey=error").ParseFiles(templateFile)
+	if err != nil {
 		return err
 	}
-	for _, path := range paths {
-		// A missing platform must fail the build, not leave an empty hash.
-		tmpl, err := template.New(filepath.Base(path)).Option("missingkey=error").ParseFiles(path)
-		if err != nil {
-			return err
-		}
-		f, err := os.Create(filepath.Join(out, strings.TrimSuffix(filepath.Base(path), ".tmpl")))
-		if err != nil {
-			return err
-		}
-		err = tmpl.Execute(f, data)
-		f.Close()
-		if err != nil {
-			return err
-		}
+	f, err := os.Create(outFile)
+	if err != nil {
+		return err
 	}
-	return nil
+	defer f.Close()
+	return t.Execute(f, data)
 }

@@ -24,27 +24,30 @@ The spike is a stand-in project with two components and no agentd name, so no ag
 
 ## Setup
 
-The flake's outputs are the interface: packages, checks and apps. CI calls nothing else.
+The flake's outputs are the interface: packages, checks and apps. CI calls nothing else. Every component is its own Go module.
 
 ```
-flake.nix                 packages (every artifact), checks (+ go vet, gofmt, tests), apps (release, dev, update)
-project.json              components (kind, release-note paths), repository, registry, tap, bucket, "latest"
+go.work                   all Go modules, for development; builds use each module's go.mod
+api/                      module: the shared contract (stands in for the Session API)
+spikectl/                 module: the CLI component (stands in for agentctl)
+spiked/                   module: the service component (stands in for agentd)
+adapters/echo/            module: an adapter component, spiked-echo, with a dependency of its own (uuid)
+tools/                    module: release, dev, update (cobra), with tests
+test/e2e/                 module: the e2e suite, run as a Helm test
+flake.nix                 packages (every artifact), checks (vet, gofmt, tests per module), apps (release, dev, update)
+project.json              components (kind, module, extra paths), repository, registry, tap, bucket, "latest"
 versions.json             version per component (written by `release cut`)
 pins.json                 external artifacts: distroless digest, gVisor release, k3s, with hashes
-tools/release/            Go: cut, notes, dist, login, publish, manifests (with tests)
-tools/dev/                Go: development cluster up, deploy, test, e2e, down
-tools/update/             Go: flake.lock, Go modules, pins.json
-tools/internal/project/   Go: reads project.json and versions.json, runs commands
-nix/go.nix                Go builds (commands, tools, the e2e test binary) and the test check
+nix/go-modules.json       per Go module: the hash of its dependencies (written by `update go`)
+nix/go.nix                Go builds per module: commands for any platform, the e2e test binary, the test check
 nix/cli.nix               a CLI's release: archives per platform, checksums, manifests
 nix/service.nix           a service's binaries, image and chart
 nix/image.nix             an image: distroless base + our binary, both platforms, built by regctl
 nix/distroless.nix        the pinned distroless base, fetched once
 nix/gvisor.nix            gVisor for the development cluster (from spike 0002)
 packaging/                Homebrew formula and Scoop manifest as Go templates
-charts/spiked/            hand-written chart: only used values, values.schema.json
+charts/<component>/       hand-written charts: only used values, values.schema.json
 dev/                      k3d config, containerd template (gVisor), helmfile (local, ci), cluster-base chart
-test/e2e/                 e2e suite (Go tests) and its chart: one Helm test pod
 Taskfile.yml              optional shortcuts for people
 .github/                  ci (3 runners + digest comparison), e2e (amd64, arm64), release, install, update; dependabot
 ```
@@ -55,6 +58,7 @@ Taskfile.yml              optional shortcuts for people
 nix flake check                           # every artifact, go vet, gofmt, tests
 nix run .#release -- dist spikectl        # archives, manifests, notes into dist/
 nix run .#release -- dist spiked          # image layout, chart, notes into dist/
+nix run .#release -- --help               # every release command
 nix run .#dev -- e2e                      # k3d + gVisor + registry, helmfile, Helm tests
 nix run .#dev -- down
 nix run .#update                          # move every pin to the newest version

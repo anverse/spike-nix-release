@@ -8,14 +8,15 @@ import (
 	"runtime"
 
 	"golang.org/x/mod/semver"
-
-	"github.com/anverse/spike-nix-release/internal/buildinfo"
 )
+
+// version is set at link time by the Nix build.
+var buildVersion = "dev"
 
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
-		valid := semver.IsValid("v" + buildinfo.Version)
-		fmt.Printf("spikectl %s %s/%s semver=%t\n", buildinfo.Version, runtime.GOOS, runtime.GOARCH, valid)
+		valid := semver.IsValid("v" + buildVersion)
+		fmt.Printf("spikectl %s %s/%s semver=%t\n", buildVersion, runtime.GOOS, runtime.GOARCH, valid)
 		return
 	}
 	fmt.Fprintln(os.Stderr, "usage: spikectl version (or --version)")

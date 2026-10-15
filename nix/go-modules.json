@@ -1,0 +1,8 @@
+{
+  "adapters/echo": "sha256-BrV/Ja5d5dp2ulajWUYKupGk3G40AYC+b7NH83zMUHg=",
+  "api": null,
+  "spikectl": "sha256-j9mQeUe1+lgmbTGA1s+OKiLbY21qRSfhWTtosc3JVyQ=",
+  "spiked": "sha256-/U9SJbgkbsaQd/04euMRgwxiDIEkibXNDnEjWArUHwA=",
+  "test/e2e": "sha256-TTa1pfB2Ucq9mzFBGeYk65Kf623Ukljok0pIWNG3UJc=",
+  "tools": "sha256-9jK3jKbFp+5WSQfMbNzwIB55bC5KScZOaFHItffTF00="
+}

@@ -27,11 +27,14 @@ jobs:
         run: |
           nix run .#release -- dist spikectl
           nix run .#release -- dist spiked
+          nix run .#release -- dist spiked-echo
       - name: Record artifact digests
         run: |
           cp dist/spikectl/archives/checksums.txt digests.txt
-          shasum -a 256 dist/spikectl/manifests/* dist/spiked/chart/* >> digests.txt
-          echo "image $(grep -o 'sha256:[0-9a-f]*' dist/spiked/image/index.json)" >> digests.txt
+          shasum -a 256 dist/spikectl/manifests/* dist/*/chart/* >> digests.txt
+          for c in spiked spiked-echo; do
+            echo "image $c $(grep -o 'sha256:[0-9a-f]*' dist/$c/image/index.json)" >> digests.txt
+          done
           cat digests.txt
       - uses: actions/upload-artifact@v7
         with:

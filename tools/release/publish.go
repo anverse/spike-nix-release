@@ -6,26 +6,27 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/anverse/spike-nix-release/tools/internal/project"
+	"github.com/anverse/spike-nix-release/tools/internal/repo"
+	"github.com/anverse/spike-nix-release/tools/internal/sh"
 )
 
-// dist builds a component's release with Nix and copies it into
-// dist/<component>, next to its release notes. Everything a release
-// publishes comes from here.
+// dist builds a component's release with Nix into dist/<component>, next to
+// its release notes. Everything a release publishes comes from there.
 func dist(component, tag string) error {
-	built, err := project.Output("nix", "build", ".#"+component+"-release", "--no-link", "--print-out-paths")
+	built, err := nixOutput("build", ".#"+component+"-release", "--no-link", "--print-out-paths")
 	if err != nil {
 		return err
 	}
 	dir := filepath.Join("dist", component)
 	os.RemoveAll(dir)
 	os.MkdirAll("dist", 0o755)
-	if err := project.Run("cp", "-RL", built, dir); err != nil {
+	if err := sh.Run("cp", "-RL", built, dir); err != nil {
 		return err
 	}
-	if err := project.Run("chmod", "-R", "u+w", dir); err != nil {
+	if err := sh.Run("chmod", "-R", "u+w", dir); err != nil {
 		return err
 	}
+
 	text, err := notes(component, tag)
 	if err != nil {
 		return err
@@ -39,63 +40,87 @@ func login() error {
 	if user == "" || token == "" {
 		return fmt.Errorf("GITHUB_ACTOR and GITHUB_TOKEN must be set")
 	}
-	if err := project.RunWith(nil, token, "regctl", "registry", "login", "ghcr.io", "-u", user, "--pass-stdin"); err != nil {
+	withToken := sh.Cmd{Stdin: token}
+	if err := withToken.Run("regctl", "registry", "login", "ghcr.io", "-u", user, "--pass-stdin"); err != nil {
 		return err
 	}
-	return project.RunWith(nil, token, "helm", "registry", "login", "ghcr.io", "-u", user, "--password-stdin")
+	return withToken.Run("helm", "registry", "login", "ghcr.io", "-u", user, "--password-stdin")
 }
 
-// publish publishes the release of a pushed tag. It runs in the release
-// workflow, on a checkout of that tag.
+// publish publishes the release of a pushed tag, in the release workflow:
+//  1. check that the checkout is that tag and versions.json agrees
+//  2. build the release into dist/, with its notes
+//  3. publish it: a CLI to GitHub, Homebrew and Scoop; a service to the
+//     registry and GitHub
 func publish(tag string) error {
-	component, version, err := project.ParseTag(tag)
+	r, err := releaseOf(tag)
 	if err != nil {
 		return err
 	}
-	p, err := project.Load(".")
-	if err != nil {
+	if err := r.checkCheckout(); err != nil {
 		return err
 	}
-	c, err := p.Component(component)
-	if err != nil {
+	// actions/checkout turns annotated tags into lightweight ones; fetch the
+	// real tag, whose message starts the release notes.
+	if err := git("fetch", "-q", "--force", "origin", "refs/tags/"+tag+":refs/tags/"+tag); err != nil {
 		return err
 	}
-	versions, err := project.LoadVersions(".")
-	if err != nil {
+	if err := dist(r.component, tag); err != nil {
 		return err
 	}
-	if versions[component] != version {
-		return fmt.Errorf("versions.json has %s %s, the tag says %s", component, versions[component], version)
-	}
-	head, _ := project.Output("git", "rev-parse", "HEAD")
-	tagged, _ := project.Output("git", "rev-list", "-n1", tag)
-	if head != tagged {
-		return fmt.Errorf("HEAD is not %s", tag)
-	}
-
-	// actions/checkout turns annotated tags into lightweight ones; fetch
-	// the real tag, whose message starts the release notes.
-	if err := project.Run("git", "fetch", "-q", "--force", "origin", "refs/tags/"+tag+":refs/tags/"+tag); err != nil {
-		return err
-	}
-	if err := dist(component, tag); err != nil {
-		return err
-	}
-
-	r := release{project: p, component: component, version: version, tag: tag, dir: filepath.Join("dist", component)}
-	switch c.Kind {
+	switch r.kind {
 	case "cli":
 		return r.publishCLI()
 	case "service":
 		return r.publishService()
 	}
-	return fmt.Errorf("component %s has unknown kind %q", component, c.Kind)
+	return fmt.Errorf("component %s has unknown kind %q", r.component, r.kind)
 }
 
+// release is one component release being published.
 type release struct {
-	project                 project.Project
-	component, version, tag string
-	dir                     string
+	project                       repo.Project
+	component, kind, version, tag string
+	dir                           string // dist/<component>
+}
+
+func releaseOf(tag string) (release, error) {
+	component, version, err := repo.ParseTag(tag)
+	if err != nil {
+		return release{}, err
+	}
+	project, err := repo.LoadProject()
+	if err != nil {
+		return release{}, err
+	}
+	c, err := project.Component(component)
+	if err != nil {
+		return release{}, err
+	}
+	return release{
+		project:   project,
+		component: component,
+		kind:      c.Kind,
+		version:   version,
+		tag:       tag,
+		dir:       filepath.Join("dist", component),
+	}, nil
+}
+
+func (r release) checkCheckout() error {
+	versions, err := repo.LoadVersions()
+	if err != nil {
+		return err
+	}
+	if versions[r.component] != r.version {
+		return fmt.Errorf("versions.json has %s %s, the tag says %s", r.component, versions[r.component], r.version)
+	}
+	head, _ := gitOutput("rev-parse", "HEAD")
+	tagged, _ := gitOutput("rev-list", "-n1", r.tag)
+	if head != tagged {
+		return fmt.Errorf("the checkout is not %s", r.tag)
+	}
+	return nil
 }
 
 // publishCLI creates the GitHub release with the archives, then updates the
@@ -105,99 +130,118 @@ func (r release) publishCLI() error {
 	if err := r.githubRelease(archives); err != nil {
 		return err
 	}
-	v := " version v" + r.version
-	if err := r.pushManifest(r.project.Tap, "Formula", r.component+".rb",
-		"Brew formula update for "+r.component+v, "TAP_TOKEN"); err != nil {
+	version := " version v" + r.version
+	formula := manifest{repo: r.project.Tap, dir: "Formula", file: r.component + ".rb",
+		message: "Brew formula update for " + r.component + version, tokenVariable: "TAP_TOKEN"}
+	scoop := manifest{repo: r.project.Bucket, dir: "bucket", file: r.component + ".json",
+		message: "Scoop update for " + r.component + version, tokenVariable: "BUCKET_TOKEN"}
+	if err := r.push(formula); err != nil {
 		return err
 	}
-	return r.pushManifest(r.project.Bucket, "bucket", r.component+".json",
-		"Scoop update for "+r.component+v, "BUCKET_TOKEN")
+	return r.push(scoop)
 }
 
 // publishService pushes the image and the chart, then creates the GitHub
 // release, whose notes name the image digest.
 func (r release) publishService() error {
 	image := fmt.Sprintf("%s/%s:%s", r.project.Registry, r.component, r.version)
-	if err := project.Run("regctl", "image", "copy", "ocidir://"+filepath.Join(r.dir, "image")+":"+r.version, image); err != nil {
-		return err
-	}
 	chart := filepath.Join(r.dir, "chart", r.component+"-"+r.version+".tgz")
-	if err := project.Run("helm", "push", chart, "oci://"+r.project.Registry+"/charts"); err != nil {
+
+	if err := regctl("image", "copy", "ocidir://"+filepath.Join(r.dir, "image")+":"+r.version, image); err != nil {
 		return err
 	}
+	if err := helm("push", chart, "oci://"+r.project.Registry+"/charts"); err != nil {
+		return err
+	}
+	if err := r.addArtifactsToNotes(image); err != nil {
+		return err
+	}
+	return r.githubRelease([]string{chart})
+}
+
+func (r release) addArtifactsToNotes(image string) error {
 	digest, err := imageDigest(filepath.Join(r.dir, "image"))
 	if err != nil {
 		return err
 	}
-	artifacts := fmt.Sprintf("\n## Artifacts\n\n"+
-		"- Image: `%s` (`%s`), linux/amd64 and linux/arm64\n"+
-		"- Chart: `oci://%s/charts/%s`, version %s\n", image, digest, r.project.Registry, r.component, r.version)
 	f, err := os.OpenFile(filepath.Join(r.dir, "notes.md"), os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
-	f.WriteString(artifacts)
-	f.Close()
-	return r.githubRelease([]string{chart})
+	defer f.Close()
+	_, err = fmt.Fprintf(f, "\n## Artifacts\n\n"+
+		"- Image: `%s` (`%s`), linux/amd64 and linux/arm64\n"+
+		"- Chart: `oci://%s/charts/%s`, version %s\n",
+		image, digest, r.project.Registry, r.component, r.version)
+	return err
 }
 
 // githubRelease creates the release for the tag. Only the component named
 // "latest" in project.json becomes the repository's latest release.
 func (r release) githubRelease(files []string) error {
-	latest := fmt.Sprintf("--latest=%t", r.component == r.project.Latest)
-	args := append([]string{"release", "create", r.tag, "--verify-tag",
+	args := []string{"release", "create", r.tag, "--verify-tag",
 		"--title", r.component + " v" + r.version,
-		"--notes-file", filepath.Join(r.dir, "notes.md"), latest}, files...)
-	return project.Run("gh", args...)
+		"--notes-file", filepath.Join(r.dir, "notes.md"),
+		fmt.Sprintf("--latest=%t", r.component == r.project.Latest)}
+	return gh(append(args, files...)...)
 }
 
-// pushManifest commits a rendered manifest into the tap or bucket
-// repository. In CI, tokenEnv names a GitHub App token for that
-// repository; locally, gh's own login is used.
-func (r release) pushManifest(repo, dir, file, message, tokenEnv string) error {
-	var env []string
-	if token := os.Getenv(tokenEnv); token != "" {
-		env = []string{"GH_TOKEN=" + token}
-	}
+// manifest is a rendered Homebrew formula or Scoop manifest and where it
+// goes.
+type manifest struct {
+	repo, dir, file, message string
+	// tokenVariable names the environment variable with a GitHub App token
+	// for the repository (CI); without it, gh's own login is used.
+	tokenVariable string
+}
+
+// push commits the manifest into its repository: clone, copy, commit, push.
+func (r release) push(m manifest) error {
 	work, err := os.MkdirTemp("", "manifest-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(work)
 
-	if err := project.RunWith(env, "", "gh", "repo", "clone", repo, work, "--", "--depth", "1", "-q"); err != nil {
+	var run sh.Cmd
+	if token := os.Getenv(m.tokenVariable); token != "" {
+		run.Env = []string{"GH_TOKEN=" + token}
+	}
+	if err := run.Run("gh", "repo", "clone", m.repo, work, "--", "--depth", "1", "-q"); err != nil {
 		return err
 	}
-	os.MkdirAll(filepath.Join(work, dir), 0o755)
-	manifest, err := os.ReadFile(filepath.Join(r.dir, "manifests", file))
+	if err := copyFile(filepath.Join(r.dir, "manifests", m.file), filepath.Join(work, m.dir, m.file)); err != nil {
+		return err
+	}
+	if changes, _ := gitOutput("-C", work, "status", "--porcelain"); changes == "" {
+		fmt.Fprintf(os.Stderr, "%s is already current in %s\n", m.file, m.repo)
+		return nil
+	}
+	run.Dir = work
+	if err := run.Run("git", "add", "-A"); err != nil {
+		return err
+	}
+	if err := run.Run("git", "commit", "-q", "-m", m.message); err != nil {
+		return err
+	}
+	return run.Run("git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "push", "-q")
+}
+
+func copyFile(from, to string) error {
+	b, err := os.ReadFile(from)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(work, dir, file), manifest, 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 		return err
 	}
-	if status, _ := project.Output("git", "-C", work, "status", "--porcelain"); status == "" {
-		fmt.Fprintf(os.Stderr, "%s is already current in %s\n", file, repo)
-		return nil
-	}
-	for _, s := range [][]string{
-		{"git", "-C", work, "add", "-A"},
-		{"git", "-C", work, "commit", "-q", "-m", message},
-		{"git", "-C", work, "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential", "push", "-q"},
-	} {
-		if err := project.RunWith(env, "", s[0], s[1:]...); err != nil {
-			return err
-		}
-	}
-	return nil
+	return os.WriteFile(to, b, 0o644)
 }
 
-// imageDigest reads the digest of the image index from an image layout.
+// imageDigest reads the digest of the image from an image layout.
 func imageDigest(layout string) (string, error) {
 	var index struct {
-		Manifests []struct {
-			Digest string `json:"digest"`
-		} `json:"manifests"`
+		Manifests []struct{ Digest string }
 	}
 	b, err := os.ReadFile(filepath.Join(layout, "index.json"))
 	if err != nil {
