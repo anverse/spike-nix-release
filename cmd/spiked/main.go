@@ -28,7 +28,7 @@ func main() {
 			"arch":    runtime.GOARCH,
 		})
 	})
-	slog.Info("listening", "addr", addr, "version", buildinfo.Version)
+	slog.Info("spiked listening", "addr", addr, "version", buildinfo.Version)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		slog.Error("serve", "err", err)
 		os.Exit(1)
