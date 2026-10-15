@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| Status | Part A done (2026-10-14, darwin/arm64, local). Part B (GitHub) pending: needs the repository `anverse/spike-nix-release`. |
+| Status | Done. Part A 2026-10-14 (darwin/arm64, local), part B 2026-10-15 (GitHub, [results](results/part-b-github.md)), part C 2026-10-15 (flake apps, Go tools, stable nixpkgs). Package visibility and cleanup open. |
 | Question | Can a Nix flake build every artifact of a monorepo (a CLI for three operating systems, multi-platform images, a Helm chart, Homebrew and Scoop manifests), with Taskfile as the only entry point and small CLIs publishing one GitHub release per component tag, identically on a laptop and in CI? |
 | Feeds into | [ADR-0023](../../spec/adr/0023-nix-as-the-single-build-system.md) (Nix as the single build system), [ADR-0024](../../spec/adr/0024-releases-per-component.md) (releases per component), [ADR-0019](../../spec/adr/0019-production-like-development-environment.md) and [development.md](../../spec/development.md) (environment, e2e as Helm tests, CI), [milestone v0.0](../../spec/milestone/v0.0.md), roadmap open question 28 |
 | Builds on | Spike 0002 (k3d with gVisor) |
-| Versions | nixpkgs unstable (2026-10): distroless `static-debian13:nonroot` (pinned by digest), Go 1.26.7, regclient 0.11.6, git-cliff 2.14.2, Helm 4.3.0, helmfile 1.8.0, k3d 5.9.0, go-task 3.53.1, nix-update 1.16.0, gh 2.101.0; k3s v1.34.12-k3s1; gVisor 20261005; Nix 2.34 |
+| Versions | nixpkgs nixos-26.05 (part C; parts A and B: unstable): Go 1.26.8, regclient 0.11.5, Helm 3.20.2, helmfile 1.5.0, k3d 5.8.3, nix-update 1.15.1, gh 2.102.0; distroless `static-debian13:nonroot` (pinned by digest); k3s v1.34.12-k3s1; gVisor 20261005; Nix 2.34 |
 
 The spike is a stand-in project with two components and no agentd name, so no agentd package or release exists before the real one: `spikectl` (a CLI, like `agentctl`) and `spiked` (a service with image and chart, like `agentd`). The directory is laid out as a repository root; part B runs it as its own GitHub repository, `anverse/spike-nix-release`, publishing into the existing `anverse/homebrew-tap` and `anverse/scoop-bucket`.
 
@@ -65,6 +65,8 @@ Part B ran this directory as the root of `anverse/spike-nix-release`, publishing
 
 ## Results (part A)
 
+Parts A and B ran with an earlier layout: Taskfile tasks held the release, update and cluster logic, and git-cliff wrote the notes. Part C replaced them; see below.
+
 All on darwin/arm64 (Rancher Desktop, moby), no Linux builder.
 
 | # | Result |
@@ -98,3 +100,24 @@ All on darwin/arm64 (Rancher Desktop, moby), no Linux builder.
 ## Not covered
 
 Signing and provenance of images and archives; macOS notarization; Sandbox reference images for agent programs (v0.1); the platform stack (Keycloak, CloudNativePG, OpenBao, agentgateway) in the dev environment, which v0.0 adds on top of this setup.
+
+## Part C: flake outputs as the only interface
+
+Rules applied: everything a person or CI does is a flake package, check or app; release, update and cluster logic are small Go programs (`tools/`) with unit tests instead of Taskfile shell; nixpkgs follows the stable `nixos-26.05` branch; the GitHub Actions are on their current major versions.
+
+| Result |
+|---|
+| CI calls only `nix flake check`, `nix run .#release -- dist`, `nix run .#dev -- e2e`, `nix run .#release -- login/publish` and `nix run .#update`. `nix flake check` builds every artifact and runs go vet, gofmt and the unit tests (notes against a temporary git repository, manifest rendering, tag parsing). |
+| Releases `spikectl` 0.2.0 and `spiked` 0.2.0 cut with `nix run .#release -- cut`: all install jobs green (Homebrew on 4 runners, Scoop on 2, Nix on 2, `releases/latest`), the image runs from ghcr.io on amd64 and arm64 and the chart renders from the registry. Release job about 1 min. |
+| Tap and bucket commits read `Brew formula update for spikectl version v0.2.0` and `Scoop update for spikectl version v0.2.0`. |
+| With a warm Nix cache: `ci` 0.5 to 2 min per runner, `e2e` about 1.2 min per architecture; artifacts identical across the three runners; no warnings in the logs after the action updates. |
+
+### Findings (part C)
+
+21. **The Go tools replace about 250 lines of Taskfile shell** with code that has types, error messages and unit tests. git-cliff is no longer needed: `git log <previous tag>..<tag> -- <paths>` in about 40 lines does what the notes need.
+22. **Helm 3 (stable branch) stamps chart files with the build time**, so `helm package` is not reproducible; Helm 4 on unstable was. The chart is packed again with fixed times, owners and order after `helm package` has validated it and set the version.
+23. **`with pkgs;` does not shadow `let` bindings**: a local `go` hid `pkgs.go` in an app's runtime inputs. Local names now avoid package names (`goBuilds`).
+24. **Cluster DNS is not ready when the node is**: one local e2e run failed with refused DNS lookups. `dev up` now waits for the CoreDNS deployment.
+25. **Release-note paths cover source, not build files.** Changes to `nix/`, `flake.lock` or `pins.json` change artifacts but appear in no component's notes. Acceptable for now; a component could list them if its users care.
+26. **Logging in from a job** (`docker login`, `helm registry login` with the workflow token) lets the pull test work while packages are private.
+
