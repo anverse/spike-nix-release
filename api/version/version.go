@@ -2,7 +2,7 @@
 // they report at GET /version. It stands in for agentd's Session API.
 package version
 
-// Info describes a running component.
+// Info describes a running component: what it is and where it runs.
 type Info struct {
 	Component string `json:"component"`
 	Version   string `json:"version"`
