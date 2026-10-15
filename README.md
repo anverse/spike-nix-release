@@ -24,45 +24,44 @@ The spike is a stand-in project with two components and no agentd name, so no ag
 
 ## Setup
 
+The flake's outputs are the interface: packages, checks and apps. CI calls nothing else.
+
 ```
-flake.nix                 dev shell; one package per artifact, listed by name; lib for the tasks
-versions.json             version per component (written by `task release`)
+flake.nix                 packages (every artifact), checks (+ go vet, gofmt, tests), apps (release, dev, update)
+project.json              components (kind, release-note paths), repository, registry, tap, bucket, "latest"
+versions.json             version per component (written by `release cut`)
 pins.json                 external artifacts: distroless digest, gVisor release, k3s, with hashes
-project.json              repository, registry, tap, bucket, which component is "latest"
-nix/components.nix        kind and release-note paths per component
-nix/go.nix                Go builds: a command for one platform, the e2e test binary
-nix/cli.nix               a CLI's release: archives per platform, checksums, formula, Scoop manifest
+tools/release/            Go: cut, notes, dist, login, publish, manifests (with tests)
+tools/dev/                Go: development cluster up, deploy, test, e2e, down
+tools/update/             Go: flake.lock, Go modules, pins.json
+tools/internal/project/   Go: reads project.json and versions.json, runs commands
+nix/go.nix                Go builds (commands, tools, the e2e test binary) and the test check
+nix/cli.nix               a CLI's release: archives per platform, checksums, manifests
 nix/service.nix           a service's binaries, image and chart
 nix/image.nix             an image: distroless base + our binary, both platforms, built by regctl
 nix/distroless.nix        the pinned distroless base, fetched once
 nix/gvisor.nix            gVisor for the development cluster (from spike 0002)
-packaging/                Homebrew formula and Scoop manifest templates
+packaging/                Homebrew formula and Scoop manifest as Go templates
 charts/spiked/            hand-written chart: only used values, values.schema.json
-cliff.toml                git-cliff: plain commit list, no convention
-Taskfile.yml              everyday tasks (lint, test, check, e2e); includes taskfiles/
-taskfiles/release.yml     cut, dry run, publish
-taskfiles/dev.yml         development cluster, images to the local registry, deploy
-taskfiles/update.yml      update flake.lock, Go modules, pins.json
-taskfiles/spike.yml       this spike's own checks
 dev/                      k3d config, containerd template (gVisor), helmfile (local, ci), cluster-base chart
 test/e2e/                 e2e suite (Go tests) and its chart: one Helm test pod
+Taskfile.yml              optional shortcuts for people
 .github/                  ci (3 runners + digest comparison), e2e (amd64, arm64), release, install, update; dependabot
 ```
 
 ## How to run
 
 ```sh
-nix develop
-task lint test check                     # vet, gofmt, chart lint, unit tests, every artifact
-task release:dry-run COMPONENT=spikectl  # archives, manifests, notes into dist/
-task release:dry-run COMPONENT=spiked    # image layout, chart, notes into dist/
-task e2e                                 # k3d + gVisor + registry, helmfile, Helm tests
-task spike:verify-notes                  # releases and notes in a throwaway repository
-task update                              # move every pin to the newest version
-task dev:down
+nix flake check                           # every artifact, go vet, gofmt, tests
+nix run .#release -- dist spikectl        # archives, manifests, notes into dist/
+nix run .#release -- dist spiked          # image layout, chart, notes into dist/
+nix run .#dev -- e2e                      # k3d + gVisor + registry, helmfile, Helm tests
+nix run .#dev -- down
+nix run .#update                          # move every pin to the newest version
+nix run .#release -- cut spikectl 0.2.0 "Summary."   # cut a release; the tag starts CI
 ```
 
-Part B: copy the directory into a clone of `anverse/spike-nix-release` and push it, then `task release COMPONENT=spikectl VERSION=0.1.0 MESSAGE="…"` and the same for `spiked`. Afterwards: reset the spike commits in `anverse/homebrew-tap` and `anverse/scoop-bucket`, delete the repository and its two ghcr.io packages (deleting a repository keeps its packages).
+Part B ran this directory as the root of `anverse/spike-nix-release`, publishing into `anverse/homebrew-tap` and `anverse/scoop-bucket`. Cleanup afterwards: reset the spike commits in the tap and the bucket, delete the repository and its two ghcr.io packages (deleting a repository keeps its packages).
 
 ## Results (part A)
 

@@ -17,12 +17,23 @@ let
     };
   };
 
+  # helm package validates the chart and sets its version. Helm 3 stamps
+  # the files with the build time, so the archive is packed again with
+  # fixed times, owners and order, like the release archives.
   chart = pkgs.runCommand "${name}-${version}-chart"
-    { nativeBuildInputs = [ pkgs.kubernetes-helm ]; }
+    { nativeBuildInputs = [ pkgs.kubernetes-helm pkgs.gnutar pkgs.gzip ]; }
     ''
       export HOME=$TMPDIR
+      archive=${name}-${version}.tgz
       helm lint ${../charts}/${name}
-      helm package ${../charts}/${name} --version ${version} --app-version ${version} -d $out
+      helm package ${../charts}/${name} --version ${version} --app-version ${version}
+
+      mkdir unpacked
+      tar -xzf $archive -C unpacked
+      mkdir $out
+      tar --sort=name --mtime=@315532800 --owner=0 --group=0 --numeric-owner \
+        -C unpacked -cf - ${name} | gzip -n -9 > $out/$archive
+      helm lint $out/$archive
     '';
 in
 {
