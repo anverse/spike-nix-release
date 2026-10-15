@@ -18,6 +18,6 @@ func main() {
 		fmt.Printf("spikectl %s %s/%s semver=%t\n", buildinfo.Version, runtime.GOOS, runtime.GOARCH, valid)
 		return
 	}
-	fmt.Fprintln(os.Stderr, "usage: spikectl version")
+	fmt.Fprintln(os.Stderr, "usage: spikectl version (or --version)")
 	os.Exit(2)
 }
