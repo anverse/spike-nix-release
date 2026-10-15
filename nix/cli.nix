@@ -4,8 +4,8 @@
 #   release/archives/   <name>_<version>_<os>_<arch>.tar.gz (.zip on Windows)
 #                       and checksums.txt
 #   release/manifests/  <name>.rb (Homebrew), <name>.json (Scoop), rendered
-#                       from packaging/ with the archives' checksums
-{ pkgs, go, project }:
+#                       by `release manifests` from packaging/ and the checksums
+{ pkgs, go, releaseTool }:
 { name, version }:
 let
   platforms = [
@@ -41,40 +41,22 @@ let
   archives = pkgs.linkFarm "${name}-${version}-archives"
     (map (p: let a = archive p; in { inherit (a) name; path = a; }) platforms);
 
-  baseUrl = "https://github.com/${project.owner}/${project.repo}/releases/download/${name}/v${version}";
-  homepage = "https://github.com/${project.owner}/${project.repo}";
-in
-{
-  native = go.binary { inherit name version; goos = pkgs.go.GOOS; goarch = pkgs.go.GOARCH; };
+  # The project file is the only part of the repository the manifests need.
+  projectFile = pkgs.writeTextDir "project.json" (builtins.readFile ../project.json);
 
   release = pkgs.runCommand "${name}-${version}-release" { } ''
-    mkdir -p $out/archives $out/manifests
+    mkdir -p $out/archives
     cp -L ${archives}/* $out/archives/
     (cd $out/archives && sha256sum * > checksums.txt)
 
-    # checksum <archive>: the archive's SHA-256 from checksums.txt
-    checksum() {
-      local archive=$1
-      awk -v file="$archive" '$2 == file { print $1 }' $out/archives/checksums.txt
-    }
-
-    substitute ${../packaging/homebrew}/${name}.rb.in $out/manifests/${name}.rb \
-      --subst-var-by version ${version} \
-      --subst-var-by baseUrl ${baseUrl} \
-      --subst-var-by homepage ${homepage} \
-      --subst-var-by sha_darwin_arm64 "$(checksum ${archiveName "darwin" "arm64"})" \
-      --subst-var-by sha_darwin_amd64 "$(checksum ${archiveName "darwin" "amd64"})" \
-      --subst-var-by sha_linux_arm64 "$(checksum ${archiveName "linux" "arm64"})" \
-      --subst-var-by sha_linux_amd64 "$(checksum ${archiveName "linux" "amd64"})"
-
-    substitute ${../packaging/scoop}/${name}.json.in $out/manifests/${name}.json \
-      --subst-var-by version ${version} \
-      --subst-var-by baseUrl ${baseUrl} \
-      --subst-var-by homepage ${homepage} \
-      --subst-var-by sha_windows_amd64 "$(checksum ${archiveName "windows" "amd64"})" \
-      --subst-var-by sha_windows_arm64 "$(checksum ${archiveName "windows" "arm64"})"
-
-    # Every placeholder must be filled.
-    ! grep -E '@[a-zA-Z_]+@|sha256 ""|"hash": ""' $out/manifests/*
+    # Homebrew formula and Scoop manifest from packaging/<tool>/<name>.*.tmpl,
+    # with the URLs and checksums of the archives above.
+    ${releaseTool}/bin/release manifests \
+      -component ${name} -version ${version} -project ${projectFile} \
+      -archives $out/archives -templates ${../packaging} -out $out/manifests
   '';
+in
+{
+  native = go.binary { inherit name version; goos = pkgs.go.GOOS; goarch = pkgs.go.GOARCH; };
+  inherit release;
 }

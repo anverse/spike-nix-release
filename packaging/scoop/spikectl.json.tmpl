@@ -1,0 +1,17 @@
+{
+  "version": "{{.Version}}",
+  "description": "Command-line tool of the Nix release spike",
+  "homepage": "{{.Homepage}}",
+  "license": "Apache-2.0",
+  "architecture": {
+    "64bit": {
+      "url": "{{.URL.windows_amd64}}",
+      "hash": "{{.SHA256.windows_amd64}}"
+    },
+    "arm64": {
+      "url": "{{.URL.windows_arm64}}",
+      "hash": "{{.SHA256.windows_arm64}}"
+    }
+  },
+  "bin": "spikectl.exe"
+}

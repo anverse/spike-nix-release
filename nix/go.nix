@@ -9,7 +9,7 @@ let
 
   src = lib.fileset.toSource {
     root = ../.;
-    fileset = lib.fileset.unions [ ../go.mod ../go.sum ../cmd ../internal ../test ];
+    fileset = lib.fileset.unions [ ../go.mod ../go.sum ../cmd ../internal ../test ../tools ];
   };
 
   # nixpkgs patches its Go toolchain to read time zones (tzdata), service
@@ -26,8 +26,8 @@ let
   });
   buildGoModule = pkgs.buildGoModule.override { go = goWithStandardPaths; };
 
-  # Hash of the Go module dependencies. After changing go.mod, run
-  # `task vendor-hash` to update it.
+  # Hash of the Go module dependencies. `nix run .#update -- go` updates the
+  # modules and this hash.
   vendorHash = "sha256-j9mQeUe1+lgmbTGA1s+OKiLbY21qRSfhWTtosc3JVyQ=";
 
   build = { name, version, goos, goarch, args }:
@@ -45,12 +45,13 @@ let
     });
 in
 {
-  # The command cmd/<name> for one platform, at $out/bin/<name>[.exe].
-  binary = { name, version, goos, goarch }:
+  # A command for one platform, at $out/bin/<name>[.exe]. Commands live in
+  # cmd/<name>, the repository's own tools in tools/<name>.
+  binary = { name, version, goos, goarch, dir ? "cmd" }:
     build {
       inherit name version goos goarch;
       args = {
-        subPackages = [ "cmd/${name}" ];
+        subPackages = [ "${dir}/${name}" ];
         # What `nix run` starts; pname is shared by all builds.
         meta.mainProgram = name;
         ldflags = [ "-s" "-w" "-X github.com/anverse/spike-nix-release/internal/buildinfo.Version=${version}" ];
@@ -79,4 +80,21 @@ in
         installPhase = "install -D e2e $out/bin/e2e";
       };
     };
+
+  # go vet, gofmt and the unit tests, as a check: `nix flake check` runs it.
+  tests = (pkgs.buildGoModule {
+    pname = "spike";
+    version = "tests";
+    inherit src vendorHash;
+    nativeCheckInputs = [ pkgs.git ];
+    buildPhase = "true";
+    checkPhase = ''
+      export CGO_ENABLED=0 HOME=$TMPDIR
+      go vet ./...
+      unformatted=$(gofmt -l cmd internal test tools)
+      if [ -n "$unformatted" ]; then echo "not gofmt-ed: $unformatted"; exit 1; fi
+      go test ./...
+    '';
+    installPhase = "touch $out";
+  });
 }

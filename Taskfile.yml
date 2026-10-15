@@ -1,45 +1,25 @@
 version: "3"
 
-# The only entry point, locally and in CI. Run inside `nix develop`.
-# Nix builds; tasks check, orchestrate and publish.
-#
-#   task lint test check          verify (what CI runs on every change)
-#   task release ...              cut and publish releases (taskfiles/release.yml)
-#   task dev:up, task e2e         development cluster and e2e (taskfiles/dev.yml)
-#   task update                   move pinned dependencies to their latest versions (taskfiles/update.yml)
-
-includes:
-  release: ./taskfiles/release.yml
-  dev: ./taskfiles/dev.yml
-  update: ./taskfiles/update.yml
-  spike: ./taskfiles/spike.yml
+# Optional shortcuts for people. Everything here is a flake output; CI calls
+# the flake directly (see flake.nix for the list).
 
 tasks:
-  lint:
-    desc: go vet, gofmt, chart lint
-    env: { CGO_ENABLED: "0" }
-    cmds:
-      - go vet ./...
-      - test -z "$(gofmt -l cmd internal test)" || (gofmt -l cmd internal test && exit 1)
-      - helm lint charts/*
-
-  test:
-    desc: Unit tests (the e2e suite skips itself outside the cluster)
-    env: { CGO_ENABLED: "0" }
-    cmds:
-      - go test ./...
-
   check:
-    desc: Build every artifact of every component (nix flake check)
-    cmds:
-      - nix flake check --print-build-logs
-
-  vendor-hash:
-    desc: Update the Go dependency hash after go.mod changes
-    cmds:
-      - nix-update --flake --version=skip spikectl
+    desc: Build every artifact, go vet, gofmt, unit tests
+    cmds: [nix flake check --print-build-logs]
 
   e2e:
-    desc: Development cluster, deploy, Helm tests (ENV=local or ci)
-    cmds:
-      - task: dev:e2e
+    desc: Development cluster, deploy, Helm tests
+    cmds: [nix run .#dev -- e2e]
+
+  dry-run:
+    desc: 'Build a release into dist/ without publishing: task dry-run -- spiked'
+    cmds: [nix run .#release -- dist {{.CLI_ARGS}}]
+
+  release:
+    desc: 'Cut a release: task release -- spikectl 0.2.0 "summary"'
+    cmds: ['nix run .#release -- cut {{.CLI_ARGS}}']
+
+  update:
+    desc: Move pinned dependencies to their newest versions
+    cmds: [nix run .#update]
