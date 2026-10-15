@@ -7,22 +7,32 @@ import (
 	"net/http"
 	"os"
 	"testing"
+	"time"
 )
 
+// get requests path from the service. A pod that is ready is not reachable
+// through its Service at once; the first requests may be refused until the
+// cluster has programmed the route, so get retries for up to a minute.
 func get(t *testing.T, path string) *http.Response {
 	t.Helper()
 	if os.Getenv("SPIKED_URL") == "" {
 		t.Skip("SPIKED_URL not set; runs as a Helm test in the cluster")
 	}
-	resp, err := http.Get(os.Getenv("SPIKED_URL") + path)
-	if err != nil {
-		t.Fatal(err)
+	deadline := time.Now().Add(time.Minute)
+	for {
+		resp, err := http.Get(os.Getenv("SPIKED_URL") + path)
+		if err == nil {
+			t.Cleanup(func() { resp.Body.Close() })
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("%s: status %d", path, resp.StatusCode)
+			}
+			return resp
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Second)
 	}
-	t.Cleanup(func() { resp.Body.Close() })
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("%s: status %d", path, resp.StatusCode)
-	}
-	return resp
 }
 
 func TestHealth(t *testing.T) {
