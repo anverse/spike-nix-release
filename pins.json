@@ -6,15 +6,15 @@
     "hash": "sha256-SIoqikgIkfDKPeJJprT5OirrmsD7oepGozXtBC6Nj7Q="
   },
   "gvisor": {
-    "release": "20261005",
+    "release": "20261012",
     "hash": {
-      "aarch64": "sha512-G8WL5viBJkztHfj/YdsCBVMavtys4AVYWsVjfFyYeDEGKzZfmfJw7wk5hJ8TA0S4Tg8aZjKUQG95i498jNMmrA==",
-      "x86_64": "sha512-eYaa6aWJNVpG1G/awGjZqVTnQXQf/nfGTjjFbqlVSYwcsE6bzkThzOUVUzPmt2vucjR8ZmG7fHj9L+Oq0ZjI/g=="
+      "aarch64": "sha512-L+dCWr0WrWymSaubw9fo52dWg02G/8wI2+l8gsO3Jip9ZAHyNjLyspZknMFAi1YEFrKrZaQEOqEj/HuQ86Gy4g==",
+      "x86_64": "sha512-lgZEXu1a7fzwUxDnzO9h2ZQImRTGYi/IJiTCTSsY2xsiEPQOQKe+J7i3dyhZ3n2VxQG066ZkIwU8lgv2cTd8Xg=="
     }
   },
   "k3s": {
     "image": "rancher/k3s",
     "channel": "stable",
-    "tag": "v1.34.12-k3s1"
+    "tag": "v1.36.5-k3s1"
   }
 }
