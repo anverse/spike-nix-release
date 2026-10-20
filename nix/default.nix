@@ -26,8 +26,15 @@ let
     };
   releaseTool = tool "release";
 
-  # How each kind of component is built; a library has no artifacts.
+  # How each kind of component is built. A library publishes no artifacts;
+  # its release package is its checked module, so every kind builds the
+  # same way.
   builders = {
+    library =
+      { name, module, ... }:
+      {
+        "${name}-release" = goBuilds.tests module;
+      };
     cli = import ./cli.nix {
       inherit pkgs releaseTool;
       go = goBuilds;
@@ -42,13 +49,11 @@ let
   # spiked-image, spiked-chart, spiked-release.
   componentPackages = lib.concatMapAttrs (
     name: component:
-    lib.optionalAttrs (builders ? ${component.kind}) (
-      builders.${component.kind} {
-        inherit name;
-        inherit (component) module;
-        version = versions.${name};
-      }
-    )
+    builders.${component.kind} {
+      inherit name;
+      inherit (component) module;
+      version = versions.${name};
+    }
   ) project.components;
 
   # Development cluster only: the e2e suite as an image, and gVisor for the
