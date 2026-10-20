@@ -1,5 +1,9 @@
 # The development environments. `local` and `ci` have the same shape;
-# deployments elsewhere use the published chart, not this file.
+# deployments elsewhere use the published charts, not this file.
+#
+# `nix run .#dev -- deploy` sets the environment variables: the path of
+# each service's chart built by Nix, the tag its image got in the cluster's
+# registry, and its version.
 environments:
   local:
     values:
@@ -14,30 +18,40 @@ helmDefaults:
   wait: true
   timeout: 300
 
+# A service from its built chart, with the image from the cluster's registry.
+{{- define "service" }}
+  - name: {{ .name }}
+    namespace: spike
+    chart: {{ requiredEnv (printf "%s_CHART" .env) }}
+    needs: [kube-system/cluster-base]
+    values:
+      - image:
+          repository: spike-registry:5000/{{ .name }}
+          digest: ""
+          tag: {{ requiredEnv (printf "%s_TAG" .env) | quote }}
+        runtimeClassName: gvisor
+{{- end }}
+
 releases:
   - name: cluster-base
     namespace: kube-system
     chart: ./charts/cluster-base
-
-  - name: spiked
-    namespace: spiked
-    chart: ../charts/spiked
-    needs: [kube-system/cluster-base]
-    values:
-      - image:
-          repository: spike-registry:5000/spiked
-          tag: {{ requiredEnv "SPIKED_TAG" | quote }}
-        runtimeClassName: gvisor
+{{- template "service" (dict "name" "spiked" "env" "SPIKED") }}
+{{- template "service" (dict "name" "spiked-echo" "env" "SPIKED_ECHO") }}
 
   - name: e2e
-    namespace: spiked
+    namespace: spike
     chart: ../test/e2e/chart
-    needs: [spiked/spiked]
+    needs: [spike/spiked, spike/spiked-echo]
     values:
       - image:
           repository: spike-registry:5000/e2e
           tag: {{ requiredEnv "E2E_TAG" | quote }}
-        url: http://spiked.spiked.svc
-        version: {{ requiredEnv "SPIKED_VERSION" | quote }}
+        spiked:
+          url: http://spiked.spike.svc
+          version: {{ requiredEnv "SPIKED_VERSION" | quote }}
+        echo:
+          url: http://spiked-echo.spike.svc
+          version: {{ requiredEnv "SPIKED_ECHO_VERSION" | quote }}
         runtimeClassName: gvisor
         expectGvisor: {{ .Values.expectGvisor }}

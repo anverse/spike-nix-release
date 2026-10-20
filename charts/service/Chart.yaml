@@ -1,0 +1,8 @@
+apiVersion: v2
+# The chart of every service. The Nix build sets the name, the description
+# and the versions per component (nix/service.nix).
+name: "@name@"
+description: "@description@"
+type: application
+version: 0.0.0-dev
+appVersion: 0.0.0-dev

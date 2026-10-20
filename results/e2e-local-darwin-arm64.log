@@ -1,0 +1,115 @@
+task: [dev:up] rm -rf .cache/gvisor && mkdir -p .cache
+task: [dev:up] cp -RL "$(nix build .#gvisor-aarch64 --no-link --print-out-paths)/bin" .cache/gvisor
+task: [dev:up] chmod -R u+w,a+rX .cache/gvisor
+task: [dev:up] GVISOR_DIR="/Users/fw/Projects/anverse/agentd/spikes/0011-nix-build-release/.cache/gvisor" DEV_DIR="/Users/fw/Projects/anverse/agentd/spikes/0011-nix-build-release/dev" k3d cluster create --config dev/k3d.yaml
+export KUBECONFIG=$(k3d kubeconfig write spike-0011)
+kubectl cluster-info
+task: [dev:up] k3d kubeconfig get spike-0011 > /Users/fw/Projects/anverse/agentd/spikes/0011-nix-build-release/.cache/kubeconfig
+task: [dev:up] kubectl --kubeconfig /Users/fw/Projects/anverse/agentd/spikes/0011-nix-build-release/.cache/kubeconfig wait --for=condition=Ready node --all --timeout=120s
+node/k3d-spike-0011-server-0 condition met
+these 3 derivations will be built:
+  /nix/store/br2ig6h3phrk8ky4z22dm91pr8l40sny-spiked-0.0.0-linux-amd64.drv
+  /nix/store/icva0vc2baq3la1scc99xlkiygg3y0vf-spiked-0.0.0-linux-arm64.drv
+  /nix/store/3ps6y41s8xv50hf7ilgq1d9rdq47a6hg-spiked-0.0.0-image.drv
+building '/nix/store/br2ig6h3phrk8ky4z22dm91pr8l40sny-spiked-0.0.0-linux-amd64.drv'...
+building '/nix/store/icva0vc2baq3la1scc99xlkiygg3y0vf-spiked-0.0.0-linux-arm64.drv'...
+building '/nix/store/3ps6y41s8xv50hf7ilgq1d9rdq47a6hg-spiked-0.0.0-image.drv'...
+task: [dev:push-image] regctl image copy --host reg=127.0.0.1:5111,tls=disabled ocidir:///nix/store/9nq6vpgsymxb7bscx1c513s5ga6n2b8w-spiked-0.0.0-image:0.0.0 127.0.0.1:5111/spiked:706ff8b4f74c
+127.0.0.1:5111/spiked:706ff8b4f74c
+task: [dev:push-image] echo 706ff8b4f74c > .cache/spiked.tag
+these 3 derivations will be built:
+  /nix/store/2whjy28lvhl9x6xkcfqd7fyqa21m1i83-e2e-dev-linux-amd64.drv
+  /nix/store/cijcxayz4xnqbq38cm8rhl93iv3vcmzm-e2e-dev-linux-arm64.drv
+  /nix/store/3z60jg5w576zk6i7bwhhp8ld6k7dxvr2-e2e-dev-image.drv
+building '/nix/store/2whjy28lvhl9x6xkcfqd7fyqa21m1i83-e2e-dev-linux-amd64.drv'...
+building '/nix/store/cijcxayz4xnqbq38cm8rhl93iv3vcmzm-e2e-dev-linux-arm64.drv'...
+building '/nix/store/3z60jg5w576zk6i7bwhhp8ld6k7dxvr2-e2e-dev-image.drv'...
+task: [dev:push-image] regctl image copy --host reg=127.0.0.1:5111,tls=disabled ocidir:///nix/store/qj61axvw8qs2nqvqyhbqvlh93maqy78m-e2e-dev-image:dev 127.0.0.1:5111/e2e:27dc2e11e118
+127.0.0.1:5111/e2e:27dc2e11e118
+task: [dev:push-image] echo 27dc2e11e118 > .cache/e2e.tag
+task: [dev:deploy] SPIKED_TAG=$(cat .cache/spiked.tag) E2E_TAG=$(cat .cache/e2e.tag) SPIKED_VERSION=$(jq -r .spiked versions.json) KUBECONFIG=/Users/fw/Projects/anverse/agentd/spikes/0011-nix-build-release/.cache/kubeconfig helmfile --file dev/helmfile.yaml.gotmpl --environment ci sync
+Building dependency release=cluster-base, chart=charts/cluster-base
+Building dependency release=spiked, chart=../charts/spiked
+Building dependency release=e2e, chart=../test/e2e/chart
+Upgrading release=cluster-base, chart=charts/cluster-base, namespace=kube-system
+Release "cluster-base" does not exist. Installing it now.
+NAME: cluster-base
+LAST DEPLOYED: Wed Oct 14 23:23:00 2026
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+Listing releases matching ^cluster-base$
+cluster-base	kube-system	1       	2026-10-14 23:23:00.4536 +0200 CEST	deployed	cluster-base-0.1.0	           
+Upgrading release=spiked, chart=../charts/spiked, namespace=spiked
+Release "spiked" does not exist. Installing it now.
+NAME: spiked
+LAST DEPLOYED: Wed Oct 14 23:23:00 2026
+NAMESPACE: spiked
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+Listing releases matching ^spiked$
+spiked	spiked   	1       	2026-10-14 23:23:00.673645 +0200 CEST	deployed	spiked-0.0.0-dev	0.0.0-dev  
+Upgrading release=e2e, chart=../test/e2e/chart, namespace=spiked
+Release "e2e" does not exist. Installing it now.
+NAME: e2e
+LAST DEPLOYED: Wed Oct 14 23:23:01 2026
+NAMESPACE: spiked
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+Listing releases matching ^e2e$
+e2e 	spiked   	1       	2026-10-14 23:23:01.84503 +0200 CEST	deployed	e2e-0.1.0	           
+
+=========================== Updated Releases ============================
+NAME           NAMESPACE     CHART                   VERSION     DURATION
+cluster-base   kube-system   ./charts/cluster-base   0.1.0             0s
+spiked         spiked        ../charts/spiked        0.0.0-dev         1s
+e2e            spiked        ../test/e2e/chart       0.1.0             0s
+
+task: [dev:e2e] SPIKED_TAG=$(cat .cache/spiked.tag) E2E_TAG=$(cat .cache/e2e.tag) SPIKED_VERSION=$(jq -r .spiked versions.json) KUBECONFIG=/Users/fw/Projects/anverse/agentd/spikes/0011-nix-build-release/.cache/kubeconfig helmfile --file dev/helmfile.yaml.gotmpl --environment ci test --logs
+Building dependency release=cluster-base, chart=charts/cluster-base
+Building dependency release=spiked, chart=../charts/spiked
+Building dependency release=e2e, chart=../test/e2e/chart
+Testing cluster-base
+Testing e2e
+Testing spiked
+NAME: cluster-base
+LAST DEPLOYED: Wed Oct 14 23:23:00 2026
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NAME: spiked
+LAST DEPLOYED: Wed Oct 14 23:23:00 2026
+NAMESPACE: spiked
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NAME: e2e
+LAST DEPLOYED: Wed Oct 14 23:23:01 2026
+NAMESPACE: spiked
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE:     e2e
+Last Started:   Wed Oct 14 23:23:02 2026
+Last Completed: Wed Oct 14 23:23:04 2026
+Phase:          Succeeded
+
+POD LOGS: e2e (e2e)
+=== RUN   TestHealth
+--- PASS: TestHealth (0.02s)
+=== RUN   TestVersion
+    e2e_test.go:37: spiked reports map[arch:arm64 os:linux version:0.0.0]
+--- PASS: TestVersion (0.01s)
+=== RUN   TestSandboxRuntime
+    runtime_linux_test.go:24: gVisor kernel log: true
+--- PASS: TestSandboxRuntime (0.00s)
+PASS
+nix develop -c task e2e ENV=ci  2.06s user 1.01s system 8% cpu 36.131 total

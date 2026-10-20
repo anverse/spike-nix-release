@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -19,12 +20,16 @@ import (
 var buildVersion = "dev"
 
 func main() {
+	addr := os.Getenv("LISTEN_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("ok\n"))
+		respond(w, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(version.Info{
+		respond(w, version.Info{
 			Component: "spiked-echo",
 			Version:   buildVersion,
 			OS:        runtime.GOOS,
@@ -32,14 +37,23 @@ func main() {
 		})
 	})
 	mux.HandleFunc("GET /echo", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{
+		respond(w, map[string]string{
 			"id":      uuid.NewString(),
 			"message": r.URL.Query().Get("message"),
 		})
 	})
-	slog.Info("echo adapter listening", "addr", ":8080", "version", buildVersion)
-	if err := http.ListenAndServe(":8080", mux); err != nil {
+
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	slog.Info("echo adapter listening", "addr", addr, "version", buildVersion)
+	if err := server.ListenAndServe(); err != nil {
 		slog.Error("serve", "err", err)
 		os.Exit(1)
+	}
+}
+
+func respond(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Warn("write response", "err", err)
 	}
 }

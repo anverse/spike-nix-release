@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/anverse/spike-nix-release/tools/internal/repo"
 	"github.com/anverse/spike-nix-release/tools/internal/sh"
@@ -12,18 +13,26 @@ import (
 
 // dist builds a component's release with Nix into dist/<component>, next to
 // its release notes. Everything a release publishes comes from there.
+// A library's release is its notes only.
 func dist(component, tag string) error {
-	built, err := nixOutput("build", ".#"+component+"-release", "--no-link", "--print-out-paths")
+	project, err := repo.LoadProject()
+	if err != nil {
+		return err
+	}
+	c, err := project.Component(component)
 	if err != nil {
 		return err
 	}
 	dir := filepath.Join("dist", component)
-	os.RemoveAll(dir)
-	os.MkdirAll("dist", 0o755)
-	if err := sh.Run("cp", "-RL", built, dir); err != nil {
+	if err := os.RemoveAll(dir); err != nil {
 		return err
 	}
-	if err := sh.Run("chmod", "-R", "u+w", dir); err != nil {
+	if c.Kind == "library" {
+		err = os.MkdirAll(dir, 0o755)
+	} else {
+		err = copyBuild(component, dir)
+	}
+	if err != nil {
 		return err
 	}
 
@@ -32,6 +41,55 @@ func dist(component, tag string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, "notes.md"), []byte(text), 0o644)
+}
+
+// copyBuild builds the component's release and copies it into dir.
+func copyBuild(component, dir string) error {
+	built, err := nixOutput("build", ".#"+component+"-release", "--no-link", "--print-out-paths")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	if err := sh.Run("cp", "-RL", built, dir); err != nil {
+		return err
+	}
+	return sh.Run("chmod", "-R", "u+w", dir)
+}
+
+// verify checks that a release tag may be published: it is on main, the
+// checkout is that tag, and versions.json names the tag's version.
+func verify(tag string) error {
+	r, err := releaseOf(tag)
+	if err != nil {
+		return err
+	}
+	versions, err := repo.LoadVersions()
+	if err != nil {
+		return err
+	}
+	if got := versions[r.component]; got != r.version {
+		return fmt.Errorf("versions.json has %s %s, the tag says %s", r.component, got, r.version)
+	}
+	head, err := gitOutput("rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	tagged, err := gitOutput("rev-list", "-n1", tag)
+	if err != nil {
+		return err
+	}
+	if head != tagged {
+		return fmt.Errorf("the checkout is not %s", tag)
+	}
+	if err := git("fetch", "-q", "origin", "main"); err != nil {
+		return err
+	}
+	if err := git("merge-base", "--is-ancestor", tag, "origin/main"); err != nil {
+		return fmt.Errorf("%s is not on main", tag)
+	}
+	return nil
 }
 
 // login logs regctl and helm in to ghcr.io with the workflow's token.
@@ -47,25 +105,19 @@ func login() error {
 	return withToken.Run("helm", "registry", "login", "ghcr.io", "-u", user, "--password-stdin")
 }
 
-// publish publishes the release of a pushed tag, in the release workflow:
-//  1. check that the checkout is that tag and versions.json agrees
-//  2. build the release into dist/, with its notes
-//  3. publish it: a CLI to GitHub, Homebrew and Scoop; a service to the
-//     registry and GitHub
+// publish publishes the release in dist/<component>, which the workflow's
+// build job made with `release dist`:
+//  1. check that dist/<component> holds the release and its notes are clean
+//  2. publish it: a CLI to GitHub, then Homebrew and Scoop; a service to the
+//     registry, then GitHub; a library to GitHub
+//
+// Every step is safe to repeat, so a failed run can be run again.
 func publish(tag string) error {
 	r, err := releaseOf(tag)
 	if err != nil {
 		return err
 	}
-	if err := r.checkCheckout(); err != nil {
-		return err
-	}
-	// actions/checkout turns annotated tags into lightweight ones; fetch the
-	// real tag, whose message starts the release notes.
-	if err := git("fetch", "-q", "--force", "origin", "refs/tags/"+tag+":refs/tags/"+tag); err != nil {
-		return err
-	}
-	if err := dist(r.component, tag); err != nil {
+	if err := r.checkDist(); err != nil {
 		return err
 	}
 	switch r.kind {
@@ -73,6 +125,8 @@ func publish(tag string) error {
 		return r.publishCLI()
 	case "service":
 		return r.publishService()
+	case "library":
+		return r.publishOnGitHub(nil)
 	}
 	return fmt.Errorf("component %s has unknown kind %q", r.component, r.kind)
 }
@@ -88,6 +142,9 @@ func releaseOf(tag string) (release, error) {
 	component, version, err := repo.ParseTag(tag)
 	if err != nil {
 		return release{}, err
+	}
+	if !semver.MatchString(version) {
+		return release{}, fmt.Errorf("version %q is not X.Y.Z", version)
 	}
 	project, err := repo.LoadProject()
 	if err != nil {
@@ -107,27 +164,27 @@ func releaseOf(tag string) (release, error) {
 	}, nil
 }
 
-func (r release) checkCheckout() error {
-	versions, err := repo.LoadVersions()
+// checkDist fails unless dist/<component> has release notes without a
+// signature in them.
+func (r release) checkDist() error {
+	text, err := os.ReadFile(filepath.Join(r.dir, "notes.md"))
 	if err != nil {
-		return err
+		return fmt.Errorf("no release in %s; run `release dist` first: %w", r.dir, err)
 	}
-	if versions[r.component] != r.version {
-		return fmt.Errorf("versions.json has %s %s, the tag says %s", r.component, versions[r.component], r.version)
-	}
-	head, _ := gitOutput("rev-parse", "HEAD")
-	tagged, _ := gitOutput("rev-list", "-n1", r.tag)
-	if head != tagged {
-		return fmt.Errorf("the checkout is not %s", r.tag)
+	if strings.Contains(string(text), "-----BEGIN ") {
+		return fmt.Errorf("%s/notes.md contains a signature block", r.dir)
 	}
 	return nil
 }
 
-// publishCLI creates the GitHub release with the archives, then updates the
-// Homebrew tap and the Scoop bucket, which point at those archives.
+// publishCLI publishes the GitHub release with the archives first, then the
+// Homebrew formula and the Scoop manifest, which point at those archives.
 func (r release) publishCLI() error {
-	archives, _ := filepath.Glob(filepath.Join(r.dir, "archives", "*"))
-	if err := r.githubRelease(archives); err != nil {
+	archives, err := filepath.Glob(filepath.Join(r.dir, "archives", "*"))
+	if err != nil || len(archives) == 0 {
+		return fmt.Errorf("no archives in %s/archives", r.dir)
+	}
+	if err := r.publishOnGitHub(archives); err != nil {
 		return err
 	}
 	version := " version v" + r.version
@@ -141,7 +198,7 @@ func (r release) publishCLI() error {
 	return r.push(scoop)
 }
 
-// publishService pushes the image and the chart, then creates the GitHub
+// publishService pushes the image and the chart, then publishes the GitHub
 // release, whose notes name the image digest.
 func (r release) publishService() error {
 	image := fmt.Sprintf("%s/%s:%s", r.project.Registry, r.component, r.version)
@@ -156,34 +213,50 @@ func (r release) publishService() error {
 	if err := r.addArtifactsToNotes(image); err != nil {
 		return err
 	}
-	return r.githubRelease([]string{chart})
+	return r.publishOnGitHub([]string{chart})
 }
 
+// addArtifactsToNotes appends the image and chart to the notes, once.
 func (r release) addArtifactsToNotes(image string) error {
+	path := filepath.Join(r.dir, "notes.md")
+	text, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(string(text), "## Artifacts") {
+		return nil
+	}
 	digest, err := imageDigest(filepath.Join(r.dir, "image"))
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(r.dir, "notes.md"), os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = fmt.Fprintf(f, "\n## Artifacts\n\n"+
+	artifacts := fmt.Sprintf("\n## Artifacts\n\n"+
 		"- Image: `%s` (`%s`), linux/amd64 and linux/arm64\n"+
 		"- Chart: `oci://%s/charts/%s`, version %s\n",
 		image, digest, r.project.Registry, r.component, r.version)
-	return err
+	return os.WriteFile(path, append(text, artifacts...), 0o644)
 }
 
-// githubRelease creates the release for the tag. Only the component named
-// "latest" in project.json becomes the repository's latest release.
-func (r release) githubRelease(files []string) error {
-	args := []string{"release", "create", r.tag, "--verify-tag",
-		"--title", r.component + " v" + r.version,
-		"--notes-file", filepath.Join(r.dir, "notes.md"),
-		fmt.Sprintf("--latest=%t", r.component == r.project.Latest)}
-	return gh(append(args, files...)...)
+// publishOnGitHub publishes the release for the tag:
+//  1. create it as a draft, unless it exists
+//  2. upload the files, replacing any from an earlier attempt
+//  3. publish it with the notes; only the component named "latest" in
+//     project.json becomes the repository's latest release
+func (r release) publishOnGitHub(files []string) error {
+	notesFile := filepath.Join(r.dir, "notes.md")
+	if _, err := sh.Output("gh", "release", "view", r.tag); err != nil {
+		if err := gh("release", "create", r.tag, "--verify-tag", "--draft",
+			"--title", r.component+" v"+r.version, "--notes-file", notesFile); err != nil {
+			return err
+		}
+	}
+	if len(files) > 0 {
+		if err := gh(append([]string{"release", "upload", r.tag, "--clobber"}, files...)...); err != nil {
+			return err
+		}
+	}
+	return gh("release", "edit", r.tag, "--draft=false", "--notes-file", notesFile,
+		fmt.Sprintf("--latest=%t", r.component == r.project.Latest))
 }
 
 // manifest is a rendered Homebrew formula or Scoop manifest and where it
@@ -195,13 +268,18 @@ type manifest struct {
 	tokenVariable string
 }
 
-// push commits the manifest into its repository: clone, copy, commit, push.
+// push commits the manifest into its repository, unless it is current:
+// clone, copy, commit, push.
 func (r release) push(m manifest) error {
 	work, err := os.MkdirTemp("", "manifest-")
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(work)
+	defer func() {
+		if err := os.RemoveAll(work); err != nil {
+			fmt.Fprintln(os.Stderr, "remove", work+":", err)
+		}
+	}()
 
 	var run sh.Cmd
 	if token := os.Getenv(m.tokenVariable); token != "" {
@@ -213,7 +291,11 @@ func (r release) push(m manifest) error {
 	if err := copyFile(filepath.Join(r.dir, "manifests", m.file), filepath.Join(work, m.dir, m.file)); err != nil {
 		return err
 	}
-	if changes, _ := gitOutput("-C", work, "status", "--porcelain"); changes == "" {
+	changes, err := gitOutput("-C", work, "status", "--porcelain")
+	if err != nil {
+		return err
+	}
+	if changes == "" {
 		fmt.Fprintf(os.Stderr, "%s is already current in %s\n", m.file, m.repo)
 		return nil
 	}

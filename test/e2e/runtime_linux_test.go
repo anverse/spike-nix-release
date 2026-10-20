@@ -11,9 +11,7 @@ import (
 // messages ("Starting gVisor..."); the test fails only when gVisor is
 // expected and absent.
 func TestSandboxRuntime(t *testing.T) {
-	if os.Getenv("SPIKED_URL") == "" {
-		t.Skip("runs as a Helm test in the cluster")
-	}
+	serviceURL(t, "SPIKED_URL")
 	buf := make([]byte, 1<<16)
 	n, err := syscall.Klogctl(3, buf)
 	log := ""

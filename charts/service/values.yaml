@@ -1,12 +1,15 @@
-# Container image. The tag defaults to the chart's appVersion.
+# Container image. The Nix build sets the repository and the digest of the
+# image this chart version was built with; the digest wins over the tag.
 image:
-  repository: ghcr.io/anverse/spike-nix-release/spiked
+  repository: "@repository@"
+  digest: "@digest@"
+  # Used when digest is empty; defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
 
 replicas: 1
 
-# Address the service listens on inside the pod.
+# The port the service listens on inside the pod (LISTEN_ADDR).
 port: 8080
 
 service:

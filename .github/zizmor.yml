@@ -1,0 +1,6 @@
+rules:
+  # GitHub's `$/…` form for actions of this repository is newer than
+  # actionlint (1.7.12), which rejects it; the workspace form `./…` stays
+  # until actionlint supports it.
+  self-repository:
+    disable: true

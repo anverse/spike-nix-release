@@ -1,8 +1,12 @@
 image:
   repository: ""
   tag: ""
-# Service under test and the version it must report.
-url: ""
-version: ""
+# The services under test and the versions they must report.
+spiked:
+  url: ""
+  version: ""
+echo:
+  url: ""
+  version: ""
 runtimeClassName: ""
 expectGvisor: false

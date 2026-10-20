@@ -1,38 +1,49 @@
 name: update
 
 # Weekly: move pinned dependencies (flake.lock, Go modules, pins.json) to
-# their newest versions and open a pull request when anything changed.
+# their newest versions, and open or update the pull request update/pins.
+# The update bot app opens it, so its checks run like any pull request's.
 on:
   schedule:
     - cron: "0 5 * * 1"
   workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
-  actions: write
+permissions: {}
 
 jobs:
   update:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/nix
       - run: nix run .#update
       - run: nix flake check --print-build-logs
-      - name: Open a pull request
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          app-id: ${{ secrets.UPDATE_BOT_APP_ID }}
+          private-key: ${{ secrets.UPDATE_BOT_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Open or update the pull request
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          BOT: ${{ steps.app.outputs.app-slug }}[bot]
         run: |
           if git diff --quiet; then echo "everything is current"; exit 0; fi
-          branch="update/$(date -u +%Y-%m-%d)"
-          git switch -c "$branch"
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+          git switch -C update/pins
+          git -c user.name="$BOT" -c user.email="$BOT@users.noreply.github.com" \
             commit -qam "update pinned dependencies"
-          git push -f origin "$branch"
-          gh pr create --head "$branch" --title "Update pinned dependencies" \
-            --body "$(git show --stat --format='Changed by `nix run .#update`:' HEAD)" || true
-          # Pull requests opened with the workflow token start no workflows;
-          # dispatched ones do.
-          gh workflow run ci.yml --ref "$branch"
-          gh workflow run e2e.yml --ref "$branch"
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+            push --force origin update/pins
+          if [ "$(gh pr view update/pins --json state --jq .state 2>/dev/null)" = OPEN ]; then
+            echo "updated the open pull request"
+          else
+            gh pr create --head update/pins --title "Update pinned dependencies" \
+              --body "$(git show --stat --format='Changed by nix run .#update:' HEAD)"
+          fi

@@ -16,9 +16,13 @@ tasks:
     desc: 'Build a release into dist/ without publishing: task dry-run -- spiked'
     cmds: [nix run .#release -- dist {{.CLI_ARGS}}]
 
-  release:
-    desc: 'Cut a release: task release -- spikectl 0.2.0 "summary"'
-    cmds: ['nix run .#release -- cut {{.CLI_ARGS}}']
+  prepare:
+    desc: 'Open a release pull request: task prepare -- spiked 0.4.0'
+    cmds: [nix run .#release -- prepare {{.CLI_ARGS}}]
+
+  tag:
+    desc: 'Tag a merged release: task tag -- spiked "Summary."'
+    cmds: ['nix run .#release -- tag {{.CLI_ARGS}}']
 
   update:
     desc: Move pinned dependencies to their newest versions

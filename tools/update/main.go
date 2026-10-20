@@ -26,7 +26,7 @@ func main() {
 	}
 	root.AddCommand(
 		command("flake", "nixpkgs in flake.lock, and with it every tool", updateFlake),
-		command("go", "the Go modules of every module in go.work, and their hashes", updateGo),
+		command("go", "the dependencies of every Go module in go.work, and their hashes", updateGo),
 		command("distroless", "the base image digest in pins.json", updateDistroless),
 		command("gvisor", "the gVisor release in pins.json", updateGvisor),
 		command("k3s", "the k3s version of the configured channel in pins.json", updateK3s),

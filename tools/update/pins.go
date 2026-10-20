@@ -10,8 +10,16 @@ import (
 	"github.com/anverse/spike-nix-release/tools/internal/sh"
 )
 
-// updateDistroless pins the newest digest of the base image's tag, and the
-// hash of the downloaded image.
+// The identity Google signs distroless images with (cosign, keyless).
+const (
+	distrolessSigner = "keyless@distroless.iam.gserviceaccount.com"
+	distrolessIssuer = "https://accounts.google.com"
+)
+
+// updateDistroless pins the newest digest of the base image's tag:
+//  1. look up the digest the tag points to now
+//  2. verify Google's signature on that digest; an unsigned image is not pinned
+//  3. pin the digest and the hash of the downloaded image
 func updateDistroless() error {
 	pins, err := repo.LoadPins()
 	if err != nil {
@@ -28,6 +36,11 @@ func updateDistroless() error {
 	}
 
 	fmt.Printf("distroless %s:%s -> %s\n", d.Image, d.Tag, latest)
+	if _, err := sh.Output("cosign", "verify", d.Image+"@"+latest,
+		"--certificate-identity", distrolessSigner, "--certificate-oidc-issuer", distrolessIssuer); err != nil {
+		return fmt.Errorf("the new distroless digest is not signed by Google: %w", err)
+	}
+	fmt.Println("distroless: signed by", distrolessSigner)
 	d.Digest, d.Hash = latest, ""
 	if err := repo.SavePins(pins); err != nil {
 		return err
@@ -69,8 +82,9 @@ func updateGvisor() error {
 	return repo.SavePins(pins)
 }
 
-// updateK3s pins the newest k3s of the configured release channel.
-// Versions look like v1.36.5+k3s1; image tags use "-" instead of "+".
+// updateK3s pins the newest k3s of the configured release channel, by tag
+// and digest. Versions look like v1.36.5+k3s1; image tags use "-" instead
+// of "+".
 func updateK3s() error {
 	pins, err := repo.LoadPins()
 	if err != nil {
@@ -87,12 +101,16 @@ func updateK3s() error {
 			continue
 		}
 		latest := strings.ReplaceAll(c.Latest, "+", "-")
-		if latest == pins.K3s.Tag {
+		digest, err := sh.Output("regctl", "manifest", "digest", pins.K3s.Image+":"+latest)
+		if err != nil {
+			return err
+		}
+		if latest == pins.K3s.Tag && digest == pins.K3s.Digest {
 			fmt.Println("k3s is current")
 			return nil
 		}
-		fmt.Println("k3s ->", latest)
-		pins.K3s.Tag = latest
+		fmt.Println("k3s ->", latest, digest)
+		pins.K3s.Tag, pins.K3s.Digest = latest, digest
 		return repo.SavePins(pins)
 	}
 	return fmt.Errorf("no k3s channel %q", pins.K3s.Channel)
@@ -103,7 +121,11 @@ func getJSON(url string, v any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			fmt.Println("close", url+":", err)
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%s: %s", url, resp.Status)
 	}

@@ -18,7 +18,9 @@ func TestRenderManifests(t *testing.T) {
 		Out:       filepath.Join(dir, "out"),
 	}
 	write := func(path, text string) {
-		os.MkdirAll(filepath.Dir(path), 0o755)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}

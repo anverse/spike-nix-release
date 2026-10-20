@@ -7,8 +7,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   verify:
@@ -16,27 +15,30 @@ jobs:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/nix
-      - name: Build every artifact, go vet, gofmt, unit tests
+      - name: Build every artifact, check every module and the configuration
         run: nix flake check --print-build-logs
       - name: Release dry runs
         run: |
-          nix run .#release -- dist spikectl
-          nix run .#release -- dist spiked
-          nix run .#release -- dist spiked-echo
+          for component in $(jq -r '.components | keys[]' project.json); do
+            nix run .#release -- dist "$component"
+          done
       - name: Record artifact digests
         run: |
           cp dist/spikectl/archives/checksums.txt digests.txt
           shasum -a 256 dist/spikectl/manifests/* dist/*/chart/* >> digests.txt
-          for c in spiked spiked-echo; do
-            echo "image $c $(grep -o 'sha256:[0-9a-f]*' dist/$c/image/index.json)" >> digests.txt
+          for image in dist/*/image/index.json; do
+            echo "$image $(grep -o 'sha256:[0-9a-f]*' "$image")" >> digests.txt
           done
           cat digests.txt
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digests-${{ matrix.runner }}
           path: digests.txt
@@ -45,8 +47,9 @@ jobs:
   compare:
     needs: verify
     runs-on: ubuntu-24.04
+    permissions: {}
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       - run: |
           for d in digests-*/digests.txt; do diff -u digests-ubuntu-24.04/digests.txt "$d"; done
           echo "identical across runners"

@@ -29,7 +29,8 @@ type Project struct {
 
 // Component is one releasable part of the repository.
 type Component struct {
-	// Kind is "cli" (archives, Homebrew, Scoop) or "service" (image, chart).
+	// Kind is "cli" (archives, Homebrew, Scoop), "service" (image, chart)
+	// or "library" (a Go module others import; its tag is its version).
 	Kind string `json:"kind"`
 	// Module is the directory of the component's Go module.
 	Module string `json:"module"`
@@ -53,12 +54,22 @@ type Pins struct {
 		Image   string `json:"image"`
 		Channel string `json:"channel"`
 		Tag     string `json:"tag"`
+		Digest  string `json:"digest"`
 	} `json:"k3s"`
 }
 
-// GoModules is nix/go-modules.json: module directory to the hash of its
-// dependencies, or nil for a module without external dependencies.
-type GoModules map[string]*string
+// GoModules is nix/go-modules.json: module directory to what the Nix build
+// needs to know about the module.
+type GoModules map[string]GoModule
+
+// GoModule is one module's entry in nix/go-modules.json.
+type GoModule struct {
+	// Hash of the module's downloaded external dependencies; nil if it has none.
+	Hash *string `json:"hash"`
+	// Local lists the repository's modules this module uses through replace
+	// directives, e.g. api. Builds and release notes include them.
+	Local []string `json:"local"`
+}
 
 const goModulesFile = "nix/go-modules.json"
 

@@ -6,6 +6,11 @@
   "bucket": "anverse/scoop-bucket",
   "latest": "spikectl",
   "components": {
+    "api": {
+      "kind": "library",
+      "module": "api",
+      "paths": []
+    },
     "spikectl": {
       "kind": "cli",
       "module": "spikectl",
@@ -17,14 +22,14 @@
       "kind": "service",
       "module": "spiked",
       "paths": [
-        "charts/spiked"
+        "charts/service"
       ]
     },
     "spiked-echo": {
       "kind": "service",
       "module": "adapters/echo",
       "paths": [
-        "charts/spiked-echo"
+        "charts/service"
       ]
     }
   }

@@ -69,12 +69,11 @@ func readArchives(project repo.Project, component, version, dir string) (manifes
 	downloads := data.Homepage + "/releases/download/" + repo.Tag(component, version)
 	prefix := component + "_" + version + "_"
 
-	f, err := os.Open(filepath.Join(dir, "checksums.txt"))
+	checksums, err := os.ReadFile(filepath.Join(dir, "checksums.txt"))
 	if err != nil {
 		return data, err
 	}
-	defer f.Close()
-	lines := bufio.NewScanner(f)
+	lines := bufio.NewScanner(strings.NewReader(string(checksums)))
 	for lines.Scan() {
 		checksum, file, ok := strings.Cut(lines.Text(), "  ")
 		if !ok || !strings.HasPrefix(file, prefix) {
@@ -94,10 +93,9 @@ func render(templateFile, outFile string, data manifestData) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.Create(outFile)
-	if err != nil {
+	var out strings.Builder
+	if err := t.Execute(&out, data); err != nil {
 		return err
 	}
-	defer f.Close()
-	return t.Execute(f, data)
+	return os.WriteFile(outFile, []byte(out.String()), 0o644)
 }

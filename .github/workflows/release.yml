@@ -1,54 +1,116 @@
 name: release
 
+# A pushed tag <component>/v<version> releases that component:
+#   build    no secrets and no cache: checks that the tag is on main, runs
+#            every check, builds the release into dist/
+#   publish  the release environment, which holds the bot secrets: pushes
+#            what build made, and attests its provenance
 on:
   push:
     tags: ["*/v*"]
 
-permissions:
-  contents: write
-  packages: write
+permissions: {}
+
+# One release at a time, so tap and bucket pushes never race.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     outputs:
       component: ${{ steps.tag.outputs.component }}
       kind: ${{ steps.tag.outputs.kind }}
       version: ${{ steps.tag.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - id: tag
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          component=${GITHUB_REF_NAME%%/*}
-          echo "component=$component" >> "$GITHUB_OUTPUT"
-          echo "kind=$(jq -r --arg c "$component" '.components[$c].kind' project.json)" >> "$GITHUB_OUTPUT"
-          echo "version=${GITHUB_REF_NAME##*/v}" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/nix
+          if [[ ! "$TAG" =~ ^[a-z0-9-]+/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "not a release tag: $TAG"; exit 1
+          fi
+          component=${TAG%%/*}
+          kind=$(jq -r --arg c "$component" '.components[$c].kind // empty' project.json)
+          if [ -z "$kind" ]; then echo "unknown component: $component"; exit 1; fi
+          {
+            echo "component=$component"
+            echo "kind=$kind"
+            echo "version=${TAG##*/v}"
+          } >> "$GITHUB_OUTPUT"
+      # Packages from cache.nixos.org (signed) and a clean build of our code;
+      # no Actions cache, which other branches could have written.
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - name: The tag is on main and matches versions.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: nix run .#release -- verify "$TAG"
+      - name: Every check passes
+        run: nix flake check --print-build-logs
+      - name: Build the release
+        env:
+          TAG: ${{ github.ref_name }}
+          COMPONENT: ${{ steps.tag.outputs.component }}
+        run: nix run .#release -- dist "$COMPONENT" "$TAG"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
       # Short-lived tokens for the tap and the bucket from the organization's
-      # release bot apps; the workflow's own token cannot push to other
-      # repositories.
-      - uses: actions/create-github-app-token@v3
+      # release bot apps, limited to writing those repositories' contents.
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        if: needs.build.outputs.kind == 'cli'
         id: tap
         with:
           app-id: ${{ secrets.HOMEBREW_BOT_APP_ID }}
           private-key: ${{ secrets.HOMEBREW_BOT_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: homebrew-tap
-      - uses: actions/create-github-app-token@v3
+          permission-contents: write
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        if: needs.build.outputs.kind == 'cli'
         id: bucket
         with:
           app-id: ${{ secrets.SCOOP_BOT_APP_ID }}
           private-key: ${{ secrets.SCOOP_BOT_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: scoop-bucket
+          permission-contents: write
       - name: Log in to ghcr.io
+        if: needs.build.outputs.kind == 'service'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: nix run .#release -- login
       - name: Publish
         env:
+          TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
           TAP_TOKEN: ${{ steps.tap.outputs.token }}
           BUCKET_TOKEN: ${{ steps.bucket.outputs.token }}
@@ -56,34 +118,64 @@ jobs:
           GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: nix run .#release -- publish "$GITHUB_REF_NAME"
+        run: nix run .#release -- publish "$TAG"
+      - name: Attest the archives
+        if: needs.build.outputs.kind == 'cli'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/${{ needs.build.outputs.component }}/archives/*
+      - id: image
+        if: needs.build.outputs.kind == 'service'
+        env:
+          COMPONENT: ${{ needs.build.outputs.component }}
+        run: echo "digest=$(jq -r '.manifests[0].digest' "dist/$COMPONENT/image/index.json")" >> "$GITHUB_OUTPUT"
+      - name: Attest the image
+        if: needs.build.outputs.kind == 'service'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}/${{ needs.build.outputs.component }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
 
   install-cli:
-    needs: release
-    if: needs.release.outputs.kind == 'cli'
+    needs: [build, publish]
+    if: needs.build.outputs.kind == 'cli'
+    permissions:
+      contents: read
     uses: ./.github/workflows/install.yml
     with:
-      version: ${{ needs.release.outputs.version }}
+      version: ${{ needs.build.outputs.version }}
 
   # Pull and run the published image, render the published chart. Logged
   # in, so it works while the packages are private.
   pull-service:
-    needs: release
-    if: needs.release.outputs.kind == 'service'
+    needs: [build, publish]
+    if: needs.build.outputs.kind == 'service'
     strategy:
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
+    permissions:
+      packages: read
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}/${{ needs.build.outputs.component }}
+      CHART: oci://ghcr.io/${{ github.repository }}/charts/${{ needs.build.outputs.component }}
+      VERSION: ${{ needs.build.outputs.version }}
     steps:
-      - env:
+      - name: Log in to ghcr.io
+        env:
           TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
         run: |
-          echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          echo "$TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          echo "$TOKEN" | helm registry login ghcr.io -u "$ACTOR" --password-stdin
       - name: Run the published image
         run: |
-          docker run -d --name service -p 8080:8080 ghcr.io/${{ github.repository }}/${{ needs.release.outputs.component }}:${{ needs.release.outputs.version }}
+          docker run -d --name service -p 8080:8080 "$IMAGE:$VERSION"
           sleep 2
           curl -fsS localhost:8080/version
-      - name: Render the published chart
-        run: helm template t oci://ghcr.io/${{ github.repository }}/charts/${{ needs.release.outputs.component }} --version ${{ needs.release.outputs.version }}
+      - name: The published chart refers to the published image by digest
+        run: |
+          helm template t "$CHART" --version "$VERSION" > rendered.yaml
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          grep -F "$IMAGE@$digest" rendered.yaml

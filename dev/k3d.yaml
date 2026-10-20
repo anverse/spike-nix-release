@@ -1,6 +1,6 @@
-# Throwaway cluster for local runs and CI. `task dev:up` sets K3S_IMAGE
-# (from pins.json) and GVISOR_DIR, DEV_DIR (absolute paths); k3d expands
-# environment variables in this file.
+# Throwaway cluster for local runs and CI. `nix run .#dev -- up` sets
+# K3S_IMAGE (image, tag and digest from pins.json) and GVISOR_DIR, DEV_DIR
+# (absolute paths); k3d expands environment variables in this file.
 apiVersion: k3d.io/v1alpha5
 kind: Simple
 metadata:

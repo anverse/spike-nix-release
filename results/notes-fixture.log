@@ -1,0 +1,31 @@
+1025296 (HEAD -> main, tag: spikectl/v0.2.0) release spikectl v0.2.0
+02d80ce teach spiked more
+d146cde teach spikectl more
+e738c03 (tag: spiked/v0.1.0) release spiked v0.1.0
+0400823 (tag: spikectl/v0.1.0) release spikectl v0.1.0
+40623c4 document a chart value
+62a28df change shared build info
+d1d1810 teach spiked something
+532ee3f teach spikectl something
+82fc812 import the spike
+### spikectl/v0.1.0
+First spikectl release.
+
+## Changes
+- import the spike (82fc812)
+- teach spikectl something (532ee3f)
+- change shared build info (62a28df)
+### spiked/v0.1.0
+First spiked release.
+
+## Changes
+- import the spike (82fc812)
+- teach spiked something (d1d1810)
+- change shared build info (62a28df)
+- document a chart value (40623c4)
+### spikectl/v0.2.0
+Second spikectl release.
+
+## Changes
+- teach spikectl more (d146cde)
+{"spikectl":"0.2.0","spiked":"0.1.0"}

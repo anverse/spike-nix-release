@@ -2,15 +2,15 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ .Release.Name }}
-  labels: {{- include "spiked.labels" . | nindent 4 }}
+  labels: {{- include "service.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicas }}
   selector:
-    matchLabels: {{- include "spiked.selectorLabels" . | nindent 6 }}
+    matchLabels: {{- include "service.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "spiked.labels" . | nindent 8 }}
+        {{- include "service.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{ end }}
       {{- with .Values.podAnnotations }}
       annotations: {{- toYaml . | nindent 8 }}
@@ -22,11 +22,11 @@ spec:
       {{- end }}
       securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-        - name: spiked
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        - name: {{ .Chart.Name }}
+          image: {{ include "service.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            - name: SPIKED_ADDR
+            - name: LISTEN_ADDR
               value: ":{{ .Values.port }}"
             {{- with .Values.extraEnv }}{{ toYaml . | nindent 12 }}{{ end }}
           ports:

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,44 +12,30 @@ import (
 
 // updateGo updates each Go module listed in go.work on its own:
 //  1. move its dependencies to their newest versions
-//  2. record the hash of its dependencies for the Nix build, or none if it
-//     has no external dependencies
+//  2. record in nix/go-modules.json the local modules it uses and the hash
+//     of its external dependencies, or none if it has no external ones
 func updateGo() error {
-	modules, err := workspaceModules()
+	modules, err := repo.WorkspaceModules()
 	if err != nil {
 		return err
 	}
-	hashes := repo.GoModules{}
+	entries := repo.GoModules{}
 	for _, module := range modules {
 		if err := updateDependencies(module); err != nil {
 			return err
 		}
-		hash, err := dependencyHash(module, hashes)
+		local, err := repo.LocalReplacements(module)
 		if err != nil {
 			return err
 		}
-		hashes[module] = hash
+		entries[module] = repo.GoModule{Local: local}
+		hash, err := dependencyHash(module, entries)
+		if err != nil {
+			return err
+		}
+		entries[module] = repo.GoModule{Hash: hash, Local: local}
 	}
-	return repo.SaveGoModules(hashes)
-}
-
-// workspaceModules lists the module directories in go.work.
-func workspaceModules() ([]string, error) {
-	out, err := sh.Output("go", "work", "edit", "-json")
-	if err != nil {
-		return nil, err
-	}
-	var work struct {
-		Use []struct{ DiskPath string }
-	}
-	if err := json.Unmarshal([]byte(out), &work); err != nil {
-		return nil, err
-	}
-	var modules []string
-	for _, u := range work.Use {
-		modules = append(modules, filepath.Clean(u.DiskPath))
-	}
-	return modules, nil
+	return repo.SaveGoModules(entries)
 }
 
 func updateDependencies(module string) error {
@@ -62,15 +47,17 @@ func updateDependencies(module string) error {
 }
 
 // dependencyHash is the hash of a module's downloaded external
-// dependencies. Nix reports it when it builds them with an empty hash.
-// A module without external dependencies has none.
-func dependencyHash(module string, hashes repo.GoModules) (*string, error) {
+// dependencies. Nix reports it when it builds them with an empty hash. A
+// module without external dependencies has none.
+func dependencyHash(module string, entries repo.GoModules) (*string, error) {
 	if !hasExternalDependencies(module) {
 		return nil, nil
 	}
 	empty := ""
-	hashes[module] = &empty
-	if err := repo.SaveGoModules(hashes); err != nil {
+	entry := entries[module]
+	entry.Hash = &empty
+	entries[module] = entry
+	if err := repo.SaveGoModules(entries); err != nil {
 		return nil, err
 	}
 	hash, err := hashReportedByNix(".#go-deps-" + strings.ReplaceAll(module, "/", "-"))

@@ -1,0 +1,9 @@
+# Changes to how the repository builds and releases need the maintainer's
+# review: workflows, build definitions, pins and the release tool.
+/.github/        @fwiech
+/nix/            @fwiech
+/flake.nix       @fwiech
+/flake.lock      @fwiech
+/pins.json       @fwiech
+/project.json    @fwiech
+/tools/          @fwiech

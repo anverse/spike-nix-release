@@ -1,12 +1,12 @@
 name: nix
-description: Install Nix and restore the cached Nix store
+description: Install Nix and restore the cached Nix store (not for releases)
 runs:
   using: composite
   steps:
-    - uses: cachix/install-nix-action@v31
-    - uses: nix-community/cache-nix-action@v7
+    - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+    - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
       with:
-        primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'go.sum') }}
+        primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'nix/go-modules.json', 'pins.json', '**/go.sum') }}
         restore-prefixes-first-match: nix-${{ runner.os }}-${{ runner.arch }}-
         gc-max-store-size-linux: 4G
         gc-max-store-size-macos: 4G

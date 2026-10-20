@@ -1,10 +1,13 @@
 version: 2
 updates:
-  # Versions of the actions in .github/workflows and .github/actions.
+  # Versions of the actions in .github/workflows and .github/actions. A new
+  # release waits a week before it is proposed.
   - package-ecosystem: github-actions
     directories: ["/", "/.github/actions/nix"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]

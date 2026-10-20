@@ -19,6 +19,7 @@ const (
 //  1. copy gVisor for the Docker host's architecture out of the Nix store
 //     (Docker on macOS cannot mount /nix/store)
 //  2. create the k3d cluster from dev/k3d.yaml, with k3s from pins.json
+//     (tag and digest)
 //  3. wait until the node and the cluster DNS are ready
 func up() error {
 	if sh.Run("k3d", "cluster", "list", cluster) == nil {
@@ -35,7 +36,9 @@ func up() error {
 }
 
 func down() error {
-	os.Remove(kubeconfig)
+	if err := os.Remove(kubeconfig); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return sh.Run("k3d", "cluster", "delete", cluster)
 }
 
@@ -48,8 +51,12 @@ func copyGvisor(to string) error {
 	if err != nil {
 		return err
 	}
-	os.RemoveAll(to)
-	os.MkdirAll(filepath.Dir(to), 0o755)
+	if err := os.RemoveAll(to); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+		return err
+	}
 	if err := sh.Run("cp", "-RL", gvisor+"/bin", to); err != nil {
 		return err
 	}
@@ -81,7 +88,7 @@ func createCluster(gvisor string) error {
 	gvisorDir, _ := filepath.Abs(gvisor)
 	devDir, _ := filepath.Abs("dev")
 	withSettings := sh.Cmd{Env: []string{
-		"K3S_IMAGE=" + pins.K3s.Image + ":" + pins.K3s.Tag,
+		"K3S_IMAGE=" + pins.K3s.Image + ":" + pins.K3s.Tag + "@" + pins.K3s.Digest,
 		"GVISOR_DIR=" + gvisorDir,
 		"DEV_DIR=" + devDir,
 	}}

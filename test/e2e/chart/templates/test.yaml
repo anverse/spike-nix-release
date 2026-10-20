@@ -18,6 +18,8 @@ spec:
     - name: e2e
       image: "{{ required "image.repository" .Values.image.repository }}:{{ required "image.tag" .Values.image.tag }}"
       env:
-        - { name: SPIKED_URL, value: {{ required "url" .Values.url | quote }} }
-        - { name: SPIKED_VERSION, value: {{ .Values.version | quote }} }
+        - { name: SPIKED_URL, value: {{ required "spiked.url" .Values.spiked.url | quote }} }
+        - { name: SPIKED_VERSION, value: {{ .Values.spiked.version | quote }} }
+        - { name: ECHO_URL, value: {{ required "echo.url" .Values.echo.url | quote }} }
+        - { name: ECHO_VERSION, value: {{ .Values.echo.version | quote }} }
         - { name: EXPECT_GVISOR, value: {{ .Values.expectGvisor | quote }} }

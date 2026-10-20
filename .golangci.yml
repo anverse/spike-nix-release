@@ -1,0 +1,17 @@
+# Linters for every Go module, run by `nix flake check`.
+version: "2"
+linters:
+  default: standard
+  enable:
+    - gosec
+  settings:
+    gosec:
+      excludes:
+        # Files the tools write (versions.json, notes, manifests) are meant
+        # to be readable like any file in the repository.
+        - G301
+        - G306
+        # The tools and the e2e suite fetch URLs from constants or from
+        # their own configuration, never from outside input.
+        - G107
+        - G704

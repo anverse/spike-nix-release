@@ -15,13 +15,13 @@ import (
 // spike-registry:5000.
 const registry = "127.0.0.1:5111"
 
-// The images the environment runs.
-var images = []string{"spiked", "e2e"}
+// The services the environment runs, besides the e2e suite.
+var services = []string{"spiked", "spiked-echo"}
 
-// deploy pushes the images to the cluster's registry, then syncs the
-// environment.
+// deploy builds and pushes every image to the cluster's registry, then
+// syncs the environment.
 func deploy(env string) error {
-	for _, name := range images {
+	for _, name := range append(services, "e2e") {
 		img, err := buildImage(name)
 		if err != nil {
 			return err
@@ -38,30 +38,41 @@ func test(env string) error {
 	return helmfile(env, "test", "--logs")
 }
 
-// helmfile runs helmfile with the values dev/helmfile.yaml.gotmpl reads
-// from the environment: image tags, the expected version, the kubeconfig.
+// helmfile runs helmfile with what dev/helmfile.yaml.gotmpl reads from the
+// environment: per service its built chart, image tag and version
+// (SPIKED_ECHO_CHART, …), the e2e image tag, and the kubeconfig.
 func helmfile(env string, args ...string) error {
-	spiked, err := buildImage("spiked")
+	versions, err := repo.LoadVersions()
 	if err != nil {
 		return err
+	}
+	var values []string
+	for _, name := range services {
+		img, err := buildImage(name)
+		if err != nil {
+			return err
+		}
+		chart, err := sh.Output("nix", "build", ".#"+name+"-chart", "--no-link", "--print-out-paths")
+		if err != nil {
+			return err
+		}
+		prefix := strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+		values = append(values,
+			prefix+"_CHART="+filepath.Join(chart, name+"-"+versions[name]+".tgz"),
+			prefix+"_TAG="+img.tag,
+			prefix+"_VERSION="+versions[name])
 	}
 	e2e, err := buildImage("e2e")
 	if err != nil {
 		return err
 	}
-	versions, err := repo.LoadVersions()
+	// Absolute: helmfile runs helm from the directory of its file.
+	config, err := filepath.Abs(kubeconfig)
 	if err != nil {
 		return err
 	}
-	// Absolute: helmfile runs helm from the directory of its file.
-	config, _ := filepath.Abs(kubeconfig)
-	withValues := sh.Cmd{Env: []string{
-		"SPIKED_TAG=" + spiked.tag,
-		"E2E_TAG=" + e2e.tag,
-		"SPIKED_VERSION=" + versions["spiked"],
-		"KUBECONFIG=" + config,
-	}}
-	return withValues.Run("helmfile",
+	values = append(values, "E2E_TAG="+e2e.tag, "KUBECONFIG="+config)
+	return sh.Cmd{Env: values}.Run("helmfile",
 		append([]string{"--file", "dev/helmfile.yaml.gotmpl", "--environment", env}, args...)...)
 }
 

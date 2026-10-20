@@ -1,0 +1,21 @@
+# Linters for the tools module: the repository's config, plus exclusions
+# for what the tools do by design.
+version: "2"
+linters:
+  default: standard
+  enable:
+    - gosec
+  settings:
+    gosec:
+      excludes:
+        # Files the tools write (versions.json, notes, manifests) are meant
+        # to be readable like any file in the repository.
+        - G301
+        - G306
+        # The tools fetch URLs from constants.
+        - G107
+        # Running commands and reading the repository's files is what the
+        # tools are for; their input is the repository itself.
+        - G204
+        - G304
+        - G703

@@ -9,59 +9,89 @@ on:
     inputs:
       version: { type: string, required: true }
 
-permissions:
-  contents: read
+permissions: {}
+
+env:
+  VERSION: ${{ inputs.version }}
+  REPOSITORY: ${{ github.repository }}
+  OWNER: ${{ github.repository_owner }}
 
 jobs:
+  version:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: The version is X.Y.Z
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "not a version: $VERSION"; exit 1; fi
+
   homebrew:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
         runner: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
+    permissions: {}
     steps:
+      # The installer at a pinned commit, checked against its checksum.
       - name: Homebrew on Linux
         if: runner.os == 'Linux'
         run: |
           if ! command -v brew; then
-            NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            curl -fsSL -o install.sh https://raw.githubusercontent.com/Homebrew/install/be041513824fd2666a0e93cf5c3b0ca3bb0eb4b6/install.sh
+            echo "5f333bbe53bc490e51e7ccb1df8779b3dd6ee73a1a7379efda216edb08ccb148  install.sh" | sha256sum -c -
+            NONINTERACTIVE=1 /bin/bash install.sh
           fi
           echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
-      - run: brew install ${{ github.repository_owner }}/tap/spikectl
-      - run: spikectl version | tee /dev/stderr | grep -q "spikectl ${{ inputs.version }} "
-      - run: brew test ${{ github.repository_owner }}/tap/spikectl
+      - run: brew install "$OWNER/tap/spikectl"
+      - run: spikectl version | tee /dev/stderr | grep -q "spikectl $VERSION "
+      - run: brew test "$OWNER/tap/spikectl"
 
   scoop:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
         runner: [windows-2025, windows-11-arm]
     runs-on: ${{ matrix.runner }}
+    permissions: {}
     steps:
+      # The installer at a pinned commit, checked against its checksum.
       - shell: pwsh
         run: |
-          iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
+          Invoke-WebRequest -Uri https://raw.githubusercontent.com/ScoopInstaller/Install/1e2f334083d609986d8c8bc9e31ae8e87c39fab4/install.ps1 -OutFile install.ps1
+          if ((Get-FileHash install.ps1 -Algorithm SHA256).Hash -ne "94F983B190438311E006B957DB7C8422709E0BA62A6C2AC04E278164108F2512") { exit 1 }
+          .\install.ps1 -RunAsAdmin
           $env:PATH = "$env:USERPROFILE\scoop\shims;$env:PATH"
-          scoop bucket add anverse https://github.com/${{ github.repository_owner }}/scoop-bucket
+          scoop bucket add anverse "https://github.com/$env:OWNER/scoop-bucket"
           scoop install anverse/spikectl
           $out = spikectl version
           Write-Output $out
-          if ($out -notmatch "spikectl ${{ inputs.version }} ") { exit 1 }
+          if ($out -notmatch "spikectl $env:VERSION ") { exit 1 }
 
   nix:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.runner }}
+    permissions: {}
     steps:
-      - uses: cachix/install-nix-action@v31
-      - run: nix run "github:${{ github.repository }}?ref=refs/tags/spikectl/v${{ inputs.version }}#spikectl" -- version | tee /dev/stderr | grep -q "spikectl ${{ inputs.version }} "
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - run: nix run "github:$REPOSITORY?ref=refs/tags/spikectl/v$VERSION#spikectl" -- version | tee /dev/stderr | grep -q "spikectl $VERSION "
 
   latest:
+    needs: version
     runs-on: ubuntu-24.04
+    permissions: {}
     steps:
-      - name: releases/latest points at spikectl
+      - name: releases/latest points at spikectl, and the archive matches checksums.txt
         run: |
-          curl -fsSL -o a.tgz "https://github.com/${{ github.repository }}/releases/latest/download/spikectl_${{ inputs.version }}_linux_amd64.tar.gz"
-          tar -xzf a.tgz && ./spikectl version
+          base="https://github.com/$REPOSITORY/releases/latest/download"
+          archive="spikectl_${VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "$archive" "$base/$archive"
+          curl -fsSL -o checksums.txt "$base/checksums.txt"
+          sha256sum -c --ignore-missing checksums.txt
+          tar -xzf "$archive" && ./spikectl version

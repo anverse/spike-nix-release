@@ -4,7 +4,7 @@
 |---|---|
 | Status | Done. Part A 2026-10-14 (darwin/arm64, local), part B 2026-10-15 (GitHub, [results](results/part-b-github.md)), part C 2026-10-15 (flake apps, Go tools, stable nixpkgs), part D 2026-10-15 (one Go module per component, cobra). Package visibility and cleanup open. |
 | Question | Can a Nix flake build every artifact of a monorepo (a CLI for three operating systems, multi-platform images, a Helm chart, Homebrew and Scoop manifests), with Taskfile as the only entry point and small CLIs publishing one GitHub release per component tag, identically on a laptop and in CI? |
-| Feeds into | [ADR-0023](../../spec/adr/0023-nix-as-the-single-build-system.md) (Nix as the single build system), [ADR-0024](../../spec/adr/0024-releases-per-component.md) (releases per component), [ADR-0019](../../spec/adr/0019-production-like-development-environment.md) and [development.md](../../spec/development.md) (environment, e2e as Helm tests, CI), [milestone v0.0](../../spec/milestone/v0.0.md), roadmap open question 28 |
+| Feeds into (agentd spec) | ADR-0023 (Nix as the single build system), ADR-0024 (releases per component), ADR-0019 and development.md (environment, e2e as Helm tests, CI), milestone v0.0, roadmap open question 28 |
 | Builds on | Spike 0002 (k3d with gVisor) |
 | Versions | nixpkgs nixos-26.05 (part C; parts A and B: unstable): Go 1.26.8, regclient 0.11.5, Helm 3.20.2, helmfile 1.5.0, k3d 5.8.3, nix-update 1.15.1, gh 2.102.0; distroless `static-debian13:nonroot` (pinned by digest); k3s v1.34.12-k3s1; gVisor 20261005; Nix 2.34 |
 
@@ -24,48 +24,138 @@ The spike is a stand-in project with two components and no agentd name, so no ag
 
 ## Setup
 
-The flake's outputs are the interface: packages, checks and apps. CI calls nothing else. Every component is its own Go module.
+The flake's outputs are the interface: packages, checks and apps. CI calls nothing else. Every component is its own Go module; components and their kinds come from `project.json`.
 
 ```
 go.work                   all Go modules, for development; builds use each module's go.mod
-api/                      module: the shared contract (stands in for the Session API)
-spikectl/                 module: the CLI component (stands in for agentctl)
-spiked/                   module: the service component (stands in for agentd)
-adapters/echo/            module: an adapter component, spiked-echo, with a dependency of its own (uuid)
-tools/                    module: release, dev, update (cobra), with tests
-test/e2e/                 module: the e2e suite, run as a Helm test
-flake.nix                 packages (every artifact), checks (vet, gofmt, tests per module), apps (release, dev, update)
-project.json              components (kind, module, extra paths), repository, registry, tap, bucket, "latest"
-versions.json             version per component (written by `release cut`)
-pins.json                 external artifacts: distroless digest, gVisor release, k3s, with hashes
-nix/go-modules.json       per Go module: the hash of its dependencies (written by `update go`)
-nix/go.nix                Go builds per module: commands for any platform, the e2e test binary, the test check
-nix/cli.nix               a CLI's release: archives per platform, checksums, manifests
-nix/service.nix           a service's binaries, image and chart
+api/                      module, library: the shared contract (stands in for the Session API)
+spikectl/                 module, CLI (stands in for agentctl)
+spiked/                   module, service (stands in for agentd)
+adapters/echo/            module, service spiked-echo: an adapter with a dependency of its own (uuid)
+tools/                    module: release, dev, update (cobra), with tests and its own .golangci.yml
+test/e2e/                 module: the e2e suite, run as a Helm test against both services
+flake.nix                 evaluates nix/ once per system
+nix/default.nix           packages, apps, checks and the shell for one system
+nix/checks.nix            config consistency, nixfmt, statix, deadnix, actionlint, zizmor
+nix/go.nix                Go builds per module, and per module: tidy, gofmt, golangci-lint, tests
+nix/cli.nix, service.nix  how a CLI and a service are built and released
 nix/image.nix             an image: distroless base + our binary, both platforms, built by regctl
-nix/distroless.nix        the pinned distroless base, fetched once
-nix/gvisor.nix            gVisor for the development cluster (from spike 0002)
+nix/distroless.nix, gvisor.nix   pinned downloads
+nix/go-modules.json       per module: hash of its external dependencies, its local modules
+project.json              components (kind, module, extra paths), repository, registry, tap, bucket
+versions.json             version per component (written by `release prepare`)
+pins.json                 distroless (digest, hash), gVisor (release, hashes), k3s (tag, digest)
+charts/service/           the one chart of every service; Nix sets name, version and image digest
 packaging/                Homebrew formula and Scoop manifest as Go templates
-charts/<component>/       hand-written charts: only used values, values.schema.json
-dev/                      k3d config, containerd template (gVisor), helmfile (local, ci), cluster-base chart
+dev/                      k3d config, containerd template (gVisor), helmfile (local, ci)
+.golangci.yml             linters for the Go modules (standard + gosec)
+.github/                  workflows, the nix action, dependabot, zizmor.yml, CODEOWNERS
 Taskfile.yml              optional shortcuts for people
-.github/                  ci (3 runners + digest comparison), e2e (amd64, arm64), release, install, update; dependabot
 ```
 
 ## How to run
 
 ```sh
-nix flake check                           # every artifact, go vet, gofmt, tests
-nix run .#release -- dist spikectl        # archives, manifests, notes into dist/
-nix run .#release -- dist spiked          # image layout, chart, notes into dist/
-nix run .#release -- --help               # every release command
-nix run .#dev -- e2e                      # k3d + gVisor + registry, helmfile, Helm tests
+nix flake check                                  # every artifact; every module and the config checked
+nix run .#release -- dist spiked                 # a release into dist/, without publishing
+nix run .#dev -- e2e                             # k3d + gVisor + registry, both services, Helm tests
 nix run .#dev -- down
-nix run .#update                          # move every pin to the newest version
-nix run .#release -- cut spikectl 0.2.0 "Summary."   # cut a release; the tag starts CI
+nix run .#update                                 # move every pin to its newest version
+nix run .#release -- prepare spiked 0.4.0        # release PR; after merge:
+nix run .#release -- tag spiked "Summary."       # tag the merged commit; the tag starts the workflow
 ```
 
-Part B ran this directory as the root of `anverse/spike-nix-release`, publishing into `anverse/homebrew-tap` and `anverse/scoop-bucket`. Cleanup afterwards: reset the spike commits in the tap and the bucket, delete the repository and its two ghcr.io packages (deleting a repository keeps its packages).
+## Repository settings
+
+These settings protect releases but live outside the repository; manage them where the repository is created (Terraform, `integrations/github` provider):
+
+```hcl
+# main takes changes only through pull requests with green checks.
+resource "github_repository_ruleset" "main" {
+  repository  = "spike-nix-release"
+  name        = "main"
+  target      = "branch"
+  enforcement = "active"
+  conditions {
+    ref_name {
+      include = ["~DEFAULT_BRANCH"]
+      exclude = []
+    }
+  }
+  rules {
+    deletion         = true
+    non_fast_forward = true
+    pull_request {
+      # 0 for a single maintainer, who cannot approve their own pull request.
+      required_approving_review_count = 0
+      require_code_owner_review       = true
+    }
+    required_status_checks {
+      strict_required_status_checks_policy = true
+      required_check { context = "compare" }
+      required_check { context = "e2e (ubuntu-24.04)" }
+      required_check { context = "e2e (ubuntu-24.04-arm)" }
+    }
+  }
+}
+
+# Only maintainers create, move or delete release tags.
+resource "github_repository_ruleset" "release_tags" {
+  repository  = "spike-nix-release"
+  name        = "release tags"
+  target      = "tag"
+  enforcement = "active"
+  conditions {
+    ref_name {
+      include = ["refs/tags/*/v*"]
+      exclude = []
+    }
+  }
+  bypass_actors {
+    actor_id    = 5 # repository admins
+    actor_type  = "RepositoryRole"
+    bypass_mode = "always"
+  }
+  rules {
+    creation = true
+    update   = true
+    deletion = true
+  }
+}
+
+# The release environment holds the bot secrets; only release tags deploy to it.
+resource "github_repository_environment" "release" {
+  repository  = "spike-nix-release"
+  environment = "release"
+  deployment_branch_policy {
+    protected_branches     = false
+    custom_branch_policies = true
+  }
+}
+
+resource "github_repository_environment_deployment_policy" "release_tags" {
+  repository  = "spike-nix-release"
+  environment = github_repository_environment.release.environment
+  tag_pattern = "*/v*"
+}
+
+# HOMEBREW_BOT_APP_ID, HOMEBREW_BOT_PRIVATE_KEY, SCOOP_BOT_APP_ID and
+# SCOOP_BOT_PRIVATE_KEY as secrets of the release environment, instead of
+# organization secrets every workflow of the repository can read.
+resource "github_actions_environment_secret" "homebrew_bot_app_id" {
+  repository      = "spike-nix-release"
+  environment     = github_repository_environment.release.environment
+  secret_name     = "HOMEBREW_BOT_APP_ID"
+  plaintext_value = var.homebrew_bot_app_id
+}
+# … the same for the other three.
+```
+
+Further settings:
+
+- **Update bot**: a GitHub App with Contents and Pull requests (read and write) on this repository; its ID and key as `UPDATE_BOT_APP_ID` and `UPDATE_BOT_PRIVATE_KEY`. The `update` workflow opens its pull request with it, so the checks run. The app is created by hand; its repositories and secrets through `github_app_installation_repositories` and `github_actions_secret`.
+- **Package visibility**: each image and chart package is made public once, in its package settings (no API).
+- **Code owners**: `.github/CODEOWNERS` names who reviews workflows, build definitions, pins and the release tool.
 
 ## Results (part A)
 
