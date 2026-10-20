@@ -103,11 +103,16 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: scoop-bucket
           permission-contents: write
+      # regctl and helm push the release; docker's login is what
+      # actions/attest uses to push the image attestation.
       - name: Log in to ghcr.io
         if: needs.build.outputs.kind == 'service'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: nix run .#release -- login
+          ACTOR: ${{ github.actor }}
+        run: |
+          nix run .#release -- login
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
       - name: Publish
         env:
           TAG: ${{ github.ref_name }}
