@@ -1,6 +1,6 @@
 {
   "api": "0.1.0",
-  "spikectl": "0.3.0",
+  "spikectl": "0.4.0",
   "spiked": "0.3.0",
   "spiked-echo": "0.2.0"
 }
