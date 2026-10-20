@@ -36,11 +36,13 @@ func TestNotes(t *testing.T) {
 
 	write("project.json", `{"components": {
 		"cli": {"kind": "cli", "module": "cli"},
-		"svc": {"kind": "service", "module": "svc", "paths": ["charts/svc"]}}}`)
+		"svc": {"kind": "service", "module": "svc", "paths": ["charts/svc"]},
+		"idle": {"kind": "service", "module": "idle"}}}`)
 	write("nix/go-modules.json", `{
 		"api": {"hash": null, "local": []},
 		"cli": {"hash": null, "local": []},
-		"svc": {"hash": null, "local": ["api"]}}`)
+		"svc": {"hash": null, "local": ["api"]},
+		"idle": {"hash": null, "local": []}}`)
 	git("init", "-q", "-b", "main")
 	git("add", "-A")
 	git("commit", "-q", "-m", "set up the modules")
@@ -58,6 +60,7 @@ func TestNotes(t *testing.T) {
 	tests := []struct{ component, tag, want string }{
 		{"cli", "cli/v0.1.0", "First cli release.\n\n## Changes\n\n- start the cli (H)\n"},
 		{"cli", "cli/v0.2.0", "Second cli release.\n\n## Changes\n\n- release notes: fix a typo (H)\n- improve the cli (H)\n"},
+		{"idle", "", "Unreleased changes.\n\n## Changes\n\nNo changes to this component since its previous release.\n"},
 		{"svc", "", "Unreleased changes.\n\n## Changes\n\n- start the service (H)\n- define the api (H)\n- document a chart value (H)\n"},
 	}
 	for _, tt := range tests {
