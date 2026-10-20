@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Done. Part A 2026-10-14 (darwin/arm64, local), part B 2026-10-15 (GitHub, [results](results/part-b-github.md)), part C 2026-10-15 (flake apps, Go tools, stable nixpkgs), part D 2026-10-15 (one Go module per component, cobra). Package visibility and cleanup open. |
+| Status | Done. Part A 2026-10-14 (darwin/arm64, local), part B 2026-10-15 (GitHub, [results](results/part-b-github.md)), part C 2026-10-15 (flake apps, Go tools, stable nixpkgs), part D 2026-10-15 (one Go module per component, cobra), part E 2026-10-20 (review and zizmor: hardened release flow and workflows). Package visibility and cleanup open. |
 | Question | Can a Nix flake build every artifact of a monorepo (a CLI for three operating systems, multi-platform images, a Helm chart, Homebrew and Scoop manifests), with Taskfile as the only entry point and small CLIs publishing one GitHub release per component tag, identically on a laptop and in CI? |
 | Feeds into (agentd spec) | ADR-0023 (Nix as the single build system), ADR-0024 (releases per component), ADR-0019 and development.md (environment, e2e as Helm tests, CI), milestone v0.0, roadmap open question 28 |
 | Builds on | Spike 0002 (k3d with gVisor) |
@@ -233,4 +233,31 @@ Every component is its own Go module: `spikectl`, `spiked`, the adapter `spiked-
 29. **The release tool needs Go** (`go mod edit` reads replace directives), so Go is one of its pinned tools. Linux runners have Go installed and hid the gap; the macOS runner showed it.
 30. **cobra uses `--flags`**: every call site (Nix build, workflows) had to change from `-flag`.
 31. **If the tools' own hash is stale, `nix run .#update` cannot build.** The weekly run never hits this (the tool builds before it updates anything); by hand, `go run ./tools/update go` in the development shell works without the hash.
+
+## Part E: a hardened release flow
+
+A review of the spike and zizmor (67 findings, 22 high) led to these changes; zizmor now reports none.
+
+- **Release flow**: `release prepare` opens a pull request that sets the version; after merge, `release tag` tags the merged commit. The workflow's build job (no secrets, no Actions cache) checks that the tag is on `main`, runs every check and builds `dist/`; the publish job, in the `release` environment, publishes it and attests archives and images. One release at a time; every publishing step can be repeated.
+- **Workflows**: actions pinned to commit SHAs (Dependabot with a week's cooldown), permissions per job, no persisted credentials, event values only through `env:`, app tokens limited to `contents: write`, installers pinned to a commit and a checksum.
+- **Checks**: per module `go mod tidy -diff`, gofmt, golangci-lint (standard + gosec), tests; nixfmt, statix, deadnix, actionlint, zizmor; the config check (`release check`).
+- **Pins**: k3s by digest; distroless only after its cosign signature verifies.
+- **Nix**: components generated from `project.json`, each system evaluated once, one chart for all services that names its image by digest.
+
+| Result |
+|---|
+| Releases through pull requests: `api` 0.1.0 (#4), `spiked-echo` 0.2.0 (#5) and 0.2.1 (#8), `spikectl` 0.4.0 (#6). Every pull request showed its six checks. |
+| `go get github.com/anverse/spike-nix-release/api@v0.1.0` resolves: the library's tag is its Go module version. |
+| `gh attestation verify` confirms SLSA provenance for the `spikectl` archives and the `spiked-echo` image, signed by `release.yml` at the tag. |
+| The published chart renders the image by digest; the image runs on amd64 and arm64. |
+| A release takes about 10 minutes: without the Actions cache, the build and publish jobs build Go without the Nix store patches. |
+
+### Findings (part E)
+
+32. **Signed tags carry their signature in the message**; `git tag --format` with subject and body did not reliably strip an SSH signature. The tool now reads the raw tag and cuts at the first `-----BEGIN `, and publishing refuses notes with a signature block.
+33. **actions/attest pushes image attestations with docker's credentials**; logging in regctl and helm is not enough (`spiked-echo` 0.2.0 failed there).
+34. **GitHub's `$/…` syntax for in-repo actions** (July 2026) is not supported by actionlint 1.7.12; zizmor's `self-repository` audit is disabled until it is.
+35. **A library needs a release package too**, so `prepare` builds every kind the same way; for `api` it is the module's checks.
+36. **Without the Actions cache, releases rebuild the patched Go toolchain** (about 5 minutes per job). A signed binary cache written only from `main` would fix it.
+37. **Repository settings stay outside the repository**: rulesets for `main` and release tags, the `release` environment with the bot secrets, the update bot app. The README lists them as Terraform.
 

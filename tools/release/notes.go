@@ -34,6 +34,9 @@ func notes(component, tag string) (string, error) {
 	for _, c := range commits {
 		fmt.Fprintf(&b, "- %s (%s)\n", c.subject, c.hash)
 	}
+	if len(commits) == 0 {
+		b.WriteString("No changes to this component since its previous release.\n")
+	}
 	return b.String(), nil
 }
 
