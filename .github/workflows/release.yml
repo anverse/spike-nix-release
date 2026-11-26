@@ -47,7 +47,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       # Packages from cache.nixos.org (signed) and a clean build of our code;
       # no Actions cache, which other branches could have written.
-      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - name: The tag is on main and matches versions.json
         env:
           TAG: ${{ github.ref_name }}
@@ -78,14 +78,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist/
       # Short-lived tokens for the tap and the bucket from the organization's
       # release bot apps, limited to writing those repositories' contents.
-      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         if: needs.build.outputs.kind == 'cli'
         id: tap
         with:
@@ -94,7 +94,7 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: homebrew-tap
           permission-contents: write
-      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         if: needs.build.outputs.kind == 'cli'
         id: bucket
         with:
